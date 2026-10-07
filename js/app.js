@@ -16,7 +16,7 @@ const state = {
   shelf: [],
   mode: 'melody', // 'melody' | 'acc'（伴奏を選ぶ）
   accDeck: [],
-  accTargetId: null, // 伴奏を選ぶ対象のフレーズ
+  accTargetId: null, // 棚の ♫ で選んだ「このフレーズだけ」の対象。null なら曲全体
   accDefault: defaultAcc(), // これからキープするフレーズに付く伴奏
   forcePos: null, // 次の候補をコード進行のこの位置から始める（進行の帯で指定）
   contextOn: false,
@@ -136,8 +136,10 @@ function buildSeq(phrases, withAcc, accOverride) {
 const curDeck = () => (state.mode === 'acc' ? state.accDeck : state.deck);
 
 // 伴奏を合わせる対象：棚で指定したフレーズ → 直前のキープ → メロディ候補
+const accSpecific = () => state.shelf.find((p) => p.id === state.accTargetId) || null;
+
 function accTarget() {
-  const t = state.shelf.find((p) => p.id === state.accTargetId) || lastKept();
+  const t = accSpecific() || lastKept();
   if (t) return t;
   fillDeck();
   return state.deck[0];
@@ -152,18 +154,27 @@ function setMode(mode) {
   state.mode = mode;
   for (const b of document.querySelectorAll('#modeSeg button')) b.classList.toggle('on', b.dataset.mode === mode);
   $('tglContext').classList.toggle('hidden', mode === 'acc');
-  $('btnAccAll').classList.toggle('hidden', mode !== 'acc');
+  $('btnAccAll').classList.toggle('hidden', mode !== 'acc' || !accSpecific());
+  updateAccLabels();
   if (!$('viewSwipe').classList.contains('hidden')) renderDeck();
 }
 
 // 選んでいる伴奏を棚の全フレーズに
+// 使用中の伴奏名をボタンに出す
+function updateAccLabels() {
+  const name = accName(state.accDefault);
+  $('tglPad').textContent = state.mode === 'acc' ? '伴奏' : `伴奏：${name}`;
+  $('tglPad2').textContent = `伴奏：${name}`;
+}
+
 function applyAccToAll() {
   const t = state.accDeck[0];
   if (!t) return;
   for (const ph of state.shelf) ph.acc = t;
   state.accDefault = t;
   save();
-  toast(`棚の全フレーズを「${accName(t)}」に`);
+  updateAccLabels();
+  toast(`曲全体の伴奏を「${accName(t)}」に`);
 }
 
 // ---------- カード ----------
@@ -198,7 +209,7 @@ function accCardEl(t, behind) {
   el.querySelector('.tag').textContent = accName(t);
   const target = accTarget();
   const k = state.shelf.indexOf(target);
-  el.querySelector('.num').textContent = k >= 0 ? `棚の${k + 1}番` : 'メロディ候補';
+  el.querySelector('.num').textContent = accSpecific() ? `棚の${k + 1}番だけ` : '曲全体';
   el._acc = t;
   el._phrase = target;
   el._segs = [{ phrase: target, acc: buildSeq([target], true, t).acc, accFocus: true }];
@@ -264,7 +275,7 @@ function renderProgBar() {
 function updateCtxLabel() {
   const top = topCard();
   if (!top) return;
-  if (state.mode === 'acc') top.querySelector('.ctx').textContent = '伴奏を選ぶ';
+  if (state.mode === 'acc') top.querySelector('.ctx').textContent = '♥で決定';
   else top.querySelector('.ctx').textContent = state.contextOn ? (lastKept() ? '◀ 直前のキープから' : '（棚が空）') : '';
 }
 
@@ -337,11 +348,18 @@ function decide(kind) {
   deciding = true;
   const item = curDeck().shift();
   if (kind === 'keep' && state.mode === 'acc') {
-    // 対象フレーズの伴奏にし、これからキープするフレーズにも使う
-    const target = accTarget();
-    if (state.shelf.includes(target)) target.acc = item;
-    state.accDefault = item;
-    toast(`伴奏「${accName(item)}」に決定`);
+    const one = accSpecific();
+    if (one) {
+      // 棚の ♫ から：そのフレーズだけ
+      one.acc = item;
+      toast(`棚の${state.shelf.indexOf(one) + 1}番の伴奏を「${accName(item)}」に`);
+    } else {
+      // 伴奏タブから：曲全体（棚の全フレーズ＋これからキープするフレーズ）
+      for (const ph of state.shelf) ph.acc = item;
+      state.accDefault = item;
+      toast(`曲全体の伴奏を「${accName(item)}」に（棚${state.shelf.length}フレーズ＋これから）`);
+    }
+    updateAccLabels();
   } else if (kind === 'keep') {
     const ph = item;
     ph.acc = ph.acc || (ph.origin === 'ending' && lastKept() ? lastKept().acc : null) || state.accDefault;
@@ -817,7 +835,11 @@ function init() {
   $('btnEnding').onclick = endingsOfLast;
   $('btnPlayCard').onclick = togglePlay;
   $('btnAccAll').onclick = applyAccToAll;
-  for (const b of document.querySelectorAll('#modeSeg button')) b.onclick = () => setMode(b.dataset.mode);
+  // タブから伴奏に切り替えたときは曲全体が対象
+  for (const b of document.querySelectorAll('#modeSeg button')) b.onclick = () => {
+    state.accTargetId = null;
+    setMode(b.dataset.mode);
+  };
   $('tglContext').onclick = () => setContext(!state.contextOn);
   $('tglPad').onclick = () => setPad(!state.padOn);
   $('tglPad2').onclick = () => setPad(!state.padOn);
