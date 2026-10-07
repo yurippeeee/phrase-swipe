@@ -291,7 +291,29 @@ function nearestIndex(pool, p) {
 export function generatePhrase(ctx) {
   const rhythm = genRhythm(ctx.bars);
   const notes = assignPitches(rhythm, ctx, { prevPitch: ctx.prevPitch });
-  return makePhrase(ctx, notes, 'new');
+  return makePhrase(ctx, breathe(notes, ctx), 'new');
+}
+
+// 小節いっぱいに詰めず、語尾の休符（息継ぎ）や出だしの休符で実際の長さをばらつかせる
+function breathe(notes, ctx) {
+  const total = ctx.bars * STEPS_PER_BAR;
+  let out = notes.map((n) => ({ ...n }));
+  if (rand() < 0.45) {
+    const cut = total - (ctx.bars === 1 ? 4 : pick([4, 8, 8]));
+    const kept = out.filter((n) => n.s < cut);
+    if (kept.length >= 3) {
+      out = kept.map((n) => (n.s + n.d > cut ? { ...n, d: cut - n.s } : n));
+      // 最後の音は休符まで伸ばして言い切る
+      const last = out[out.length - 1];
+      last.d = cut - last.s;
+    }
+  }
+  if (rand() < 0.25) {
+    const start = pick([2, 4, 4]);
+    const kept = out.filter((n) => n.s >= start);
+    if (kept.length >= 3) out = kept;
+  }
+  return snapStrong(out, ctx);
 }
 
 function makePhrase(ctx, notes, origin, parentId) {
@@ -307,8 +329,57 @@ function makePhrase(ctx, notes, origin, parentId) {
   };
 }
 
+// ---------- くり返し ----------
+const chordsKey = (chords) => chords.map((c) => c.label).join(' ');
+
+// 決めたフレーズを次の位置のコードに合わせてもう一度使う。
+// コードが同じならそのまま、違えば音階上でずらして（ゼクエンツ）強拍をコードトーンに合わせる。
+// newEnding: 語尾（最後の半小節 / 1小節なら最後の拍）だけ作り直す
+export function repeatPhrase(ph, chords, { newEnding = false } = {}) {
+  const ctx = { ...ctxOf(ph), chords };
+  let notes = ph.notes.map((n) => ({ ...n }));
+  if (chordsKey(chords) !== chordsKey(ph.chords)) {
+    const { lo, hi } = rangeFor(ctx.key);
+    const pool = scalePitches(ctx.key, ctx.scale, lo - 3, hi + 3);
+    let best = 0;
+    let bestScore = -Infinity;
+    for (let sh = -3; sh <= 3; sh++) {
+      let score = sh === 0 ? 0.5 : -Math.abs(sh) * 0.2;
+      notes.forEach((n, i) => {
+        const ni = nearestIndex(pool, n.p) + sh;
+        const chord = chords[Math.floor(n.s / STEPS_PER_BAR) % chords.length];
+        if (ni < 0 || ni >= pool.length) score -= 5;
+        else if ((n.s % 8 === 0 || n.d >= 4 || i === notes.length - 1) && isChordTone(pool[ni], chord)) score += 1;
+      });
+      if (score > bestScore) {
+        bestScore = score;
+        best = sh;
+      }
+    }
+    notes = snapStrong(
+      notes.map((n) => ({ ...n, p: pool[Math.max(0, Math.min(pool.length - 1, nearestIndex(pool, n.p) + best))] })),
+      ctx,
+    );
+  }
+  if (newEnding) notes = regenTail(notes, ctx, ph.bars === 1 ? 4 : 8);
+  const out = makePhrase(ctx, notes, newEnding ? 'repeat2' : 'repeat', ph.id);
+  out.motif = ph.motif || ph.id;
+  return out;
+}
+
+// 最後の len ステップだけ作り直す
+function regenTail(notes, ctx, len) {
+  const cut = ctx.bars * STEPS_PER_BAR - len;
+  const head = notes.filter((n) => n.s < cut).map((n) => ({ ...n, d: Math.min(n.d, cut - n.s) }));
+  const tailR = genRhythm(ctx.bars)
+    .filter((n) => n.s >= cut)
+    .map(({ s, d }) => ({ s, d }));
+  const prev = head.length ? head[head.length - 1].p : undefined;
+  return head.concat(assignPitches(tailR, ctx, { prevPitch: prev }));
+}
+
 // ---------- 派生（これに近いの） ----------
-const ORIGIN_LABEL = { new: '新規', rhythm: 'リズム違い', pitch: '音程違い', partial: '一部変更' };
+const ORIGIN_LABEL = { new: '新規', rhythm: 'リズム違い', pitch: '音程違い', partial: '一部変更', repeat: 'くり返し', repeat2: 'くり返し・語尾変え' };
 export const originLabel = (o) => ORIGIN_LABEL[o] || o;
 
 function ctxOf(phrase) {
@@ -392,15 +463,7 @@ function varyPartial(ph) {
     }
     return snapStrong(notes, ctx);
   }
-  const total = ph.bars * STEPS_PER_BAR;
-  const cut = total - 8;
-  const head = ph.notes.filter((n) => n.s < cut).map((n) => ({ ...n, d: Math.min(n.d, cut - n.s) }));
-  const tailR = genRhythm(ph.bars)
-    .filter((n) => n.s >= cut)
-    .map(({ s, d }) => ({ s, d }));
-  const prev = head.length ? head[head.length - 1].p : undefined;
-  const tail = assignPitches(tailR, ctx, { prevPitch: prev });
-  return head.concat(tail);
+  return regenTail(ph.notes, ctx, 8);
 }
 
 const sig = (notes) => notes.map((n) => `${n.p}.${n.s}.${n.d}`).join(',');

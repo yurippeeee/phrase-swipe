@@ -1,16 +1,17 @@
 import { KEY_NAMES, parseProgression, voiceChord } from './theory.js';
-import { generatePhrase, makeVariants, originLabel, STEPS_PER_BAR } from './generator.js';
+import { generatePhrase, makeVariants, repeatPhrase, originLabel, newId, STEPS_PER_BAR } from './generator.js';
 import * as audio from './audio.js';
 import { drawRoll } from './roll.js';
 import { buildMidi, downloadMidi } from './midi.js';
 
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'phraseSwipe.v1';
+const SETTINGS_VER = 2;
 
 const PRESETS = ['I-V-vi-IV', 'I-vi-IV-V', 'vi-IV-I-V', 'ii-V-I-vi', 'I-IV-V-IV', 'i-VI-III-VII', 'i-iv-v-i', 'i-VII-VI-VII'];
 
 const state = {
-  settings: { key: 0, scale: 'major', bpm: 100, prog: 'I-V-vi-IV', bars: 2 },
+  settings: { key: 0, scale: 'major', bpm: 100, prog: 'I-V-vi-IV', bars: 'random' },
   deck: [],
   shelf: [],
   contextOn: false,
@@ -23,7 +24,7 @@ const state = {
 function save() {
   try {
     const { settings, shelf, contextOn, padOn, judged } = state;
-    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, shelf, contextOn, padOn, judged }));
+    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, judged }));
   } catch (e) {
     /* 容量超過やプライベートモード */
   }
@@ -34,6 +35,8 @@ function load() {
     const d = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
     if (!d) return;
     Object.assign(state.settings, d.settings || {});
+    // v1 は長さ固定（2小節）が既定だったので、ランダムに移行
+    if ((d.settingsVer || 1) < 2) state.settings.bars = 'random';
     state.shelf = Array.isArray(d.shelf) ? d.shelf : [];
     state.contextOn = !!d.contextOn;
     state.padOn = d.padOn !== false;
@@ -53,20 +56,42 @@ function progression() {
 const lastKept = () => state.shelf[state.shelf.length - 1];
 
 // 次に置く位置（棚の長さ）から、そのフレーズが担当するコードを決める
-function nextSlot() {
+function nextSlot(bars) {
   const prog = progression();
   const bar = state.shelf.reduce((a, p) => a + p.bars, 0);
-  const bars = state.settings.bars;
   const chords = [];
   for (let b = 0; b < bars; b++) chords.push(prog[(bar + b) % prog.length]);
   return { chords, bars };
 }
 
+// 長さ「ランダム」は 1小節多め
+const pickBars = () => (state.settings.bars === 'random' ? (Math.random() < 0.6 ? 1 : 2) : state.settings.bars);
+
 const chordsKey = (chords) => chords.map((c) => c.label).join(' ');
+// 候補が今の位置のコードに合っているか
+const fitsSlot = (p) => chordsKey(p.chords) === chordsKey(nextSlot(p.bars).chords);
+
+// キープ直後の候補：決めたフレーズのくり返し（A A, A A'）と、1つ前のフレーズへの戻り（A B A）
+function repeatCandidates() {
+  const n = state.shelf.length;
+  const last = state.shelf[n - 1];
+  if (!last) return [];
+  const motif = (p) => p.motif || p.id;
+  // 同じフレーズが既に3回続いていたら勧めない
+  const run = state.shelf.slice(-3).filter((p) => motif(p) === motif(last)).length;
+  const out = [];
+  if (run < 3) {
+    out.push(repeatPhrase(last, nextSlot(last.bars).chords));
+    if (Math.random() < 0.6) out.push(repeatPhrase(last, nextSlot(last.bars).chords, { newEnding: true }));
+  }
+  const before = state.shelf[n - 2];
+  if (before && motif(before) !== motif(last)) out.push(repeatPhrase(before, nextSlot(before.bars).chords));
+  return out;
+}
 
 function newCandidate() {
   const s = state.settings;
-  const { chords, bars } = nextSlot();
+  const { chords, bars } = nextSlot(pickBars());
   const last = lastKept();
   const prevPitch = last && last.notes.length ? last.notes[last.notes.length - 1].p : undefined;
   return generatePhrase({ key: s.key, scale: s.scale, chords, bars, prevPitch });
@@ -213,9 +238,10 @@ function decide(kind) {
   const ph = state.deck.shift();
   if (kind === 'keep') {
     state.shelf.push(ph);
-    // 担当コードが変わるので、合わなくなった候補は作り直す
-    const slot = chordsKey(nextSlot().chords);
-    state.deck = state.deck.filter((p) => chordsKey(p.chords) === slot);
+    // 担当コードが変わるので、合わなくなった候補は作り直す。くり返し候補を先頭に
+    const reps = repeatCandidates();
+    const fresh = state.deck.filter((p) => fitsSlot(p) && p.origin !== 'repeat' && p.origin !== 'repeat2');
+    state.deck = [reps[0], fresh[0], ...reps.slice(1), ...fresh.slice(1)].filter(Boolean);
     toast(`キープ（${state.shelf.length}）`);
   }
   const dir = kind === 'keep' ? 1 : -1;
@@ -284,14 +310,25 @@ function renderShelf() {
   state.shelf.forEach((ph, i) => {
     const li = document.createElement('li');
     li.className = 'row';
-    li.innerHTML = `<button class="handle" aria-label="並べ替え">≡</button><canvas></canvas><button class="del" aria-label="削除">✕</button><span class="idx">${i + 1}</span>`;
+    li.innerHTML = `<button class="handle" aria-label="並べ替え">≡</button><canvas></canvas><button class="dup" aria-label="くり返し（複製）">⧉</button><button class="del" aria-label="削除">✕</button><span class="idx">${i + 1}</span>`;
     li.querySelector('.del').onclick = () => {
       state.shelf.splice(i, 1);
       updateCounts();
       save();
       renderShelf();
     };
+    li.querySelector('.dup').onclick = () => {
+      const copy = { ...ph, id: newId(), motif: ph.motif || ph.id, notes: ph.notes.map((n) => ({ ...n })) };
+      state.shelf.splice(i + 1, 0, copy);
+      updateCounts();
+      save();
+      renderShelf();
+      toast(`${i + 1} をくり返しました`);
+    };
     li.querySelector('canvas').onclick = () => playRow(i);
+    // 小節数が分かるよう、短いフレーズは幅も短く
+    const maxBars = Math.max(...state.shelf.map((p) => p.bars));
+    li.querySelector('canvas').style.width = `${(ph.bars / maxBars) * 100}%`;
     bindDrag(li, i);
     ul.append(li);
   });
@@ -427,7 +464,7 @@ function syncSettingsForm() {
 function refreshForm() {
   for (const b of $('setKey').children) b.classList.toggle('on', +b.dataset.v === draft.key);
   for (const b of $('setScale').children) b.classList.toggle('on', b.dataset.v === draft.scale);
-  for (const b of $('setBars').children) b.classList.toggle('on', +b.dataset.v === draft.bars);
+  for (const b of $('setBars').children) b.classList.toggle('on', b.dataset.v === String(draft.bars));
   $('bpmOut').textContent = draft.bpm;
   const chords = parseProgression(draft.prog, draft.key, draft.scale);
   const pv = $('progPreview');
@@ -459,7 +496,7 @@ function bindSettings() {
   });
   $('setBars').addEventListener('click', (e) => {
     if (!e.target.dataset.v) return;
-    draft.bars = +e.target.dataset.v;
+    draft.bars = e.target.dataset.v === 'random' ? 'random' : +e.target.dataset.v;
     refreshForm();
   });
   $('setBpm').addEventListener('input', (e) => {
@@ -513,8 +550,7 @@ function showView(id) {
   if (id === 'viewSwipe') {
     stopSong();
     // 棚の編集で担当コードが変わっていたら候補を入れ替える
-    const slot = chordsKey(nextSlot().chords);
-    state.deck = state.deck.filter((p) => chordsKey(p.chords) === slot);
+    state.deck = state.deck.filter(fitsSlot);
     renderDeck();
   } else {
     renderShelf();

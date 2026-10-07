@@ -64,6 +64,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .tag.rhythm { color: #ffd17a; }
 .tag.pitch { color: #8fe3ff; }
 .tag.partial { color: #c9a6ff; }
+.tag.repeat, .tag.repeat2 { color: var(--keep); }
 .card-head .ctx { font-size: 12px; }
 .card-head .num { margin-left: auto; }
 .card canvas { flex: 1; width: 100%; min-height: 0; border-radius: 12px; display: block; }
@@ -112,7 +113,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .shelf { list-style: none; margin: 0; padding: 0; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .shelf-empty { flex: 1; color: var(--muted); text-align: center; padding-top: 40px; line-height: 1.8; }
 .row {
-  display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 6px;
+  display: grid; grid-template-columns: 40px 1fr 44px 44px; align-items: center; gap: 4px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
   padding: 6px; margin-bottom: 8px; position: relative;
 }
@@ -120,8 +121,9 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .row.dragging { z-index: 5; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5); opacity: 0.95; }
 .row .handle { height: 68px; font-size: 22px; color: var(--muted); touch-action: none; }
 .row canvas { width: 100%; height: 68px; border-radius: 8px; display: block; }
-.row .del { height: 68px; font-size: 18px; color: var(--muted); }
-.row .idx { position: absolute; left: 54px; bottom: 8px; font-size: 10px; color: var(--muted); pointer-events: none; }
+.row .del, .row .dup { height: 68px; font-size: 18px; color: var(--muted); }
+.row .dup { color: var(--chord); font-size: 20px; }
+.row .idx { position: absolute; left: 48px; bottom: 8px; font-size: 10px; color: var(--muted); pointer-events: none; }
 .shelf-actions { display: flex; gap: 8px; justify-content: center; padding: 10px 0; flex-wrap: wrap; }
 .wide { width: 100%; height: 64px; border-radius: 20px; font-size: 18px; font-weight: 800; margin-bottom: 12px; }
 .primary { background: var(--accent); color: #0b0d12; }
