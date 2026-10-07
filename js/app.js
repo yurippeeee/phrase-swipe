@@ -1,7 +1,7 @@
 import { KEY_NAMES, parseProgression } from './theory.js';
 import { generateAcc, defaultAcc, accVariants, accName, realizeBar } from './accomp.js';
 import { START_DEGREES, PROGRESSIONS, PROG_NAMES } from './progressions.js';
-import { generatePhrase, makeVariants, copyPhrase, endingVariants, reharmonize, originLabel, STEPS_PER_BAR } from './generator.js';
+import { generatePhrase, makeVariants, copyPhrase, endingVariants, transposePhrase, originLabel, STEPS_PER_BAR } from './generator.js';
 import * as audio from './audio.js';
 import { drawRoll } from './roll.js';
 import { buildMidi, downloadMidi } from './midi.js';
@@ -18,7 +18,7 @@ const state = {
   accDeck: [],
   accTargetId: null, // 伴奏を選ぶ対象のフレーズ
   accDefault: defaultAcc(), // これからキープするフレーズに付く伴奏
-  forcePos: null, // 次の候補をコード進行のこの位置から始める（進行の帯で指定・進行を変えた直後）
+  forcePos: null, // 次の候補をコード進行のこの位置から始める（進行の帯で指定）
   contextOn: false,
   padOn: true,
   cardPlaying: true,
@@ -62,13 +62,26 @@ function progression() {
 
 const lastKept = () => state.shelf[state.shelf.length - 1];
 
-// 直前のフレーズの続き（コード進行上の位置）から、次のフレーズが担当するコードを決める。
-// くり返したフレーズはコードも同じなので、くり返しの後は元のフレーズの続きから進む
+// コードは曲の中の位置で決まる：棚の先頭から小節を数えて進行を当てはめる。
+// くり返したフレーズもメロディは同じまま、コードは次へ進む。
+// jump: 進行の帯で「このコードから」と指定して置いたフレーズは、そこから数え直す
+function relayout() {
+  const prog = progression();
+  let pos = 0;
+  for (const ph of state.shelf) {
+    if (ph.jump != null) pos = ph.jump;
+    ph.pos = pos % prog.length;
+    ph.chords = [];
+    for (let b = 0; b < ph.bars; b++) ph.chords.push({ ...prog[(pos + b) % prog.length] });
+    pos += ph.bars;
+  }
+}
+
+// 次のフレーズの位置（直前のフレーズの続き）と、担当するコード
 function nextSlot(bars) {
   const prog = progression();
   const last = lastKept();
-  const pos =
-    state.forcePos != null ? state.forcePos : !last ? 0 : last.pos != null ? last.pos + last.bars : state.shelf.reduce((a, p) => a + p.bars, 0);
+  const pos = state.forcePos != null ? state.forcePos : last ? last.pos + last.bars : 0;
   const chords = [];
   for (let b = 0; b < bars; b++) chords.push(prog[(pos + b) % prog.length]);
   return { chords, bars, pos: pos % prog.length };
@@ -79,9 +92,8 @@ const pickBars = () => (state.settings.bars === 'random' ? (Math.random() < 0.6 
 
 const chordsKey = (chords) => chords.map((c) => c.label).join(' ');
 const motifOf = (p) => p.motif || p.id;
-// 候補が今の位置に置けるか（語尾違いは直前のフレーズと同じ位置の代わりなので、直前と同じ動機なら可）
-const fitsSlot = (p) =>
-  p.origin === 'ending' ? !!lastKept() && motifOf(lastKept()) === p.motif : chordsKey(p.chords) === chordsKey(nextSlot(p.bars).chords);
+// 候補が今の位置のコードに合っているか
+const fitsSlot = (p) => chordsKey(p.chords) === chordsKey(nextSlot(p.bars).chords);
 
 function newCandidate() {
   const s = state.settings;
@@ -330,8 +342,10 @@ function decide(kind) {
   } else if (kind === 'keep') {
     const ph = item;
     ph.acc = ph.acc || (ph.origin === 'ending' && lastKept() ? lastKept().acc : null) || state.accDefault;
+    if (state.forcePos != null) ph.jump = state.forcePos;
     state.shelf.push(ph);
     state.forcePos = null;
+    relayout();
     // 担当コードが変わるので、合わなくなった候補は作り直す（語尾違いを選んだら他の語尾違いは片付ける）
     state.deck = state.deck.filter((p) => fitsSlot(p) && !(ph.origin === 'ending' && p.origin === 'ending'));
     state.accTargetId = null;
@@ -371,8 +385,12 @@ function updateLastBar() {
 function repeatLast() {
   const last = lastKept();
   if (!last) return;
-  state.shelf.push(copyPhrase(last));
+  const copy = copyPhrase(last);
+  delete copy.jump;
+  if (state.forcePos != null) copy.jump = state.forcePos;
+  state.shelf.push(copy);
   state.forcePos = null;
+  relayout();
   state.deck = state.deck.filter(fitsSlot);
   updateCounts();
   updateLastBar();
@@ -385,7 +403,7 @@ function repeatLast() {
 function endingsOfLast() {
   const last = lastKept();
   if (!last || deciding) return;
-  const vars = endingVariants(last, 5);
+  const vars = endingVariants(last, nextSlot(last.bars), 5);
   state.deck = [...vars, ...state.deck.filter((p) => p.origin !== 'ending')];
   renderDeck();
   toast(`語尾違いを${vars.length}つ用意`);
@@ -451,6 +469,7 @@ function renderShelf() {
     li.querySelector('.del').onclick = () => {
       if (at() < 0) return;
       state.shelf.splice(at(), 1);
+      relayout();
       updateCounts();
       save();
       renderShelf();
@@ -458,7 +477,10 @@ function renderShelf() {
     li.querySelector('.dup').onclick = () => {
       const k = at();
       if (k < 0) return;
-      state.shelf.splice(k + 1, 0, copyPhrase(ph));
+      const copy = copyPhrase(ph);
+      delete copy.jump;
+      state.shelf.splice(k + 1, 0, copy);
+      relayout();
       updateCounts();
       save();
       renderShelf();
@@ -560,6 +582,7 @@ function bindDrag(li) {
       if (target !== index) {
         const [ph] = state.shelf.splice(index, 1);
         state.shelf.splice(target, 0, ph);
+        relayout();
         save();
       }
       renderShelf();
@@ -709,13 +732,11 @@ function bindSettings() {
     state.settings = { ...draft };
     if (regen) state.deck = [];
     if (harmonyChanged) {
-      if (state.shelf.length && confirm(`棚の${state.shelf.length}フレーズにも新しいコード進行を当てはめますか？\n（メロディの強拍はコードに合わせて少し変わります。キャンセルで棚はそのまま）`)) {
-        reharmonizeShelf();
-        state.forcePos = null;
-      } else {
-        // 新しい進行は先頭のコードから使う
-        state.forcePos = 0;
-      }
+      // 棚にも新しい進行を当てはめる（キー・スケールが変わったらメロディも移す）
+      state.shelf = state.shelf.map((ph) => transposePhrase(ph, state.settings.key, state.settings.scale));
+      state.forcePos = null;
+      relayout();
+      updateLastBar();
     }
     state.accDeck = [];
     save();
@@ -726,25 +747,6 @@ function bindSettings() {
   };
   $('btnSettings').onclick = () => openSheet(true);
   $('sheetBackdrop').onclick = () => openSheet(false);
-}
-
-// 棚を先頭から新しい進行に沿って並べ直す。くり返し（同じ動機の連続）は同じコードのまま
-function reharmonizeShelf() {
-  const prog = progression();
-  const { key, scale } = state.settings;
-  let next = 0;
-  let prev = null;
-  state.shelf = state.shelf.map((ph) => {
-    const isRepeat = prev && (ph.origin === 'repeat' || ph.origin === 'ending') && motifOf(ph) === motifOf(prev);
-    const pos = isRepeat ? prev.pos : next % prog.length;
-    const chords = [];
-    for (let b = 0; b < ph.bars; b++) chords.push(prog[(pos + b) % prog.length]);
-    const out = reharmonize(ph, { key, scale, chords, pos });
-    next = pos + ph.bars;
-    prev = out;
-    return out;
-  });
-  updateLastBar();
 }
 
 function updateInfo() {
@@ -797,6 +799,7 @@ function init() {
   const ver = document.querySelector('meta[name="app-version"]');
   $('appVersion').textContent = `ver ${ver ? ver.content : '?'}`;
   load();
+  relayout();
   updateInfo();
   updateCounts();
   bindSettings();

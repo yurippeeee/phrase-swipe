@@ -337,8 +337,9 @@ export function copyPhrase(ph) {
 }
 
 // 語尾だけ違うフレーズの候補（3回くり返して4回目で変える、など）
-export function endingVariants(ph, count = 5) {
-  const ctx = ctxOf(ph);
+// slot: この候補を置く位置のコード { chords, pos }。語尾はそのコードに合わせて作る
+export function endingVariants(ph, slot, count = 5) {
+  const ctx = { ...ctxOf(ph), chords: slot.chords, pos: slot.pos };
   const seen = new Set([sig(ph.notes)]);
   const out = [];
   for (let tries = 0; out.length < count && tries < count * 8; tries++) {
@@ -388,10 +389,9 @@ function snapStrong(notes, ctx) {
   });
 }
 
-// 既存のフレーズに別のコード（とキー・スケール）を当てはめる。
-// メロディはキーの差だけ移調し、スケール外の音は最寄りのスケール音へ、強拍はコードトーンへ寄せる
-export function reharmonize(ph, { key, scale, chords, pos }) {
-  const ctx = { key, scale, chords, bars: ph.bars };
+// キー・スケールを変えたときに、メロディを新しいキーへ移す（キーの差だけ移調し、スケール外の音は最寄りのスケール音へ）
+export function transposePhrase(ph, key, scale) {
+  if (ph.key === key && ph.scale === scale) return ph;
   const shift = ((key - (ph.key ?? key) + 18) % 12) - 6;
   const { lo, hi } = rangeFor(key);
   const pool = scalePitches(key, scale, lo - 6, hi + 6);
@@ -399,7 +399,7 @@ export function reharmonize(ph, { key, scale, chords, pos }) {
     const p = n.p + shift;
     return { ...n, p: pool.reduce((a, c) => (Math.abs(c - p) < Math.abs(a - p) ? c : a), pool[0]) };
   });
-  return { ...ph, key, scale, pos, chords: chords.map((c) => ({ ...c })), notes: snapStrong(notes, ctx) };
+  return { ...ph, key, scale, notes };
 }
 
 // リズムを作り直し、元の音程の並び（輪郭）を保つ
