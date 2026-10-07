@@ -162,9 +162,9 @@ function setMode(mode) {
 // 選んでいる伴奏を棚の全フレーズに
 // 使用中の伴奏名をボタンに出す
 function updateAccLabels() {
-  const name = accName(state.accDefault);
+  const name = state.padOn ? accName(state.accDefault) : 'OFF';
   $('tglPad').textContent = state.mode === 'acc' ? '伴奏' : `伴奏：${name}`;
-  $('tglPad2').textContent = `伴奏：${name}`;
+  $('tglPad2').textContent = `伴奏：${state.padOn ? 'ON' : 'OFF'}`;
 }
 
 function applyAccToAll() {
@@ -350,9 +350,11 @@ function decide(kind) {
   if (kind === 'keep' && state.mode === 'acc') {
     const one = accSpecific();
     if (one) {
-      // 棚の ♫ から：そのフレーズだけ
+      // 棚の ♫ から：そのフレーズだけ。決めたら棚に戻る
       one.acc = item;
+      state.accTargetId = null;
       toast(`棚の${state.shelf.indexOf(one) + 1}番の伴奏を「${accName(item)}」に`);
+      setTimeout(() => showView('viewShelf'), 250);
     } else {
       // 伴奏タブから：曲全体（棚の全フレーズ＋これからキープするフレーズ）
       for (const ph of state.shelf) ph.acc = item;
@@ -457,6 +459,7 @@ function setPad(on) {
   state.padOn = on;
   $('tglPad').setAttribute('aria-pressed', String(on));
   $('tglPad2').setAttribute('aria-pressed', String(on));
+  updateAccLabels();
   save();
   if (!$('viewSwipe').classList.contains('hidden')) playCurrent();
   else if (songPlaying) playSong();
@@ -801,6 +804,8 @@ function showView(id) {
     state.deck = state.deck.filter(fitsSlot);
     renderDeck();
   } else {
+    // 棚に戻ったら「このフレーズだけ」の指定は解除（次に伴奏タブで選ぶときは曲全体）
+    state.accTargetId = null;
     renderShelf();
   }
 }
