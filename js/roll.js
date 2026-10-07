@@ -70,6 +70,13 @@ export function drawRoll(canvas, segments, opts = {}) {
       g.fillStyle = C['roll-fade'];
       g.fillRect(x0 * stepW, 0, segSteps * stepW, h);
     }
+    // 16分の補助線（幅に余裕があるときだけ）
+    if (stepW >= 6) {
+      g.fillStyle = C['roll-beat'];
+      g.globalAlpha = 0.45;
+      for (let s = 1; s < segSteps; s++) if (s % 4) g.fillRect(Math.round((x0 + s) * stepW), labelH, 1, h - labelH);
+      g.globalAlpha = 1;
+    }
     // 拍線・小節線
     for (let s = 0; s <= segSteps; s += 4) {
       const xx = Math.round((x0 + s) * stepW) + 0.5;

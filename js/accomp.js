@@ -27,6 +27,8 @@ export const ACC_STYLES = {
   mix: '和音＋アルペジオ',
   broken: '分散',
   bassline: 'ベースライン＋パッド',
+  arp16: '16分アルペジオ',
+  funk: '16分カッティング',
 };
 
 export function accName(t) {
@@ -37,7 +39,16 @@ export function accName(t) {
 const ev = (s, d, v, inst = 'keys') => ({ s, d, v, inst });
 
 // 'x' の位置に音を置くリズム（16分 × 16）
-const STAB_RHYTHMS = ['x...x...x...x...', 'x..x..x...x..x..', '..x...x...x...x.', 'x.x.x.x.x.x.x.x.', 'x..x..x.x..x..x.', 'x.....x...x.....', 'x...x..x..x.x...'];
+const STAB_RHYTHMS = ['x...x...x...x...', 'x..x..x...x..x..', '..x...x...x...x.', 'x.x.x.x.x.x.x.x.', 'x..x..x.x..x..x.', 'x.....x...x.....', 'x...x..x..x.x...',
+  // 16分を含む刻み
+  'x.xxx.xxx.xxx.xx', 'x..x..x..x.xx.x.', 'xxx.xxx.xxx.xxx.', 'x.xx.xx.x.xx.xx.'];
+// 16分のカッティング（和音）とそれに絡むベース
+const FUNK_RHYTHMS = ['x.xx.x.xx.xx.x.x', 'xx.x.xx.x.xx.xx.', 'x..xx.x..xx.x.xx', '.xx.x.xx.xx.x.xx'];
+const FUNK_BASS = [
+  [['R', 0, 3], ['R', 3, 1], ['O', 6, 2], ['R', 8, 3], ['F', 11, 1], ['O', 14, 2]],
+  [['R', 0, 2], ['R', 3, 1], ['F', 4, 2], ['R', 7, 1], ['R', 8, 2], ['O', 10, 2], ['F', 13, 1], ['R', 14, 2]],
+  [['R', 0, 1], ['R', 2, 1], ['R', 3, 1], ['F', 6, 2], ['R', 8, 1], ['O', 10, 1], ['F', 11, 1], ['R', 12, 4]],
+];
 const ARP_ORDERS = [[0, 1, 2, 3], [0, 1, 2, 1], [0, 2, 1, 2], [0, 1, 2, 3, 4, 3, 2, 1], [0, 2, 4, 2], [2, 1, 0, 1], [0, 1, 2, 4]];
 
 function fromRhythm(str, v, inst, maxLen = 4) {
@@ -67,7 +78,7 @@ function barFor(style) {
         ? [ev(0, 4, ['R'], 'bass'), ev(4, 3, ['C']), ev(8, 4, ['F'], 'bass'), ev(12, 3, ['C'])]
         : [ev(0, 2, ['R'], 'bass'), ev(2, 2, ['C']), ev(4, 2, ['F'], 'bass'), ev(6, 2, ['C']), ev(8, 2, ['R'], 'bass'), ev(10, 2, ['C']), ev(12, 2, ['F'], 'bass'), ev(14, 2, ['C'])];
     case 'arp': {
-      const rate = weighted([2, 1, 4], [3, 1.2, 0.6]);
+      const rate = weighted([2, 1, 4], [2, 2, 0.5]);
       return [ev(0, 16, ['R'], 'bass'), ...arpRun(0, 16, rate, pick(ARP_ORDERS))];
     }
     case 'mix': {
@@ -90,12 +101,21 @@ function barFor(style) {
       out.push(ev(8, 8, [pick(['R', 'F'])], 'bass'));
       return out;
     }
+    case 'arp16':
+      return [ev(0, 8, ['R'], 'bass'), ev(8, 8, [pick(['R', 'F', 'O'])], 'bass'), ...arpRun(0, 16, 1, pick(ARP_ORDERS))];
+    case 'funk': {
+      const bass = pick(FUNK_BASS).map(([v, st, d]) => ev(st, d, [v], 'bass'));
+      return [...bass, ...fromRhythm(pick(FUNK_RHYTHMS), ['C'], 'keys', 1)];
+    }
     case 'bassline':
     default: {
       const line = pick([
         [ev(0, 6, ['R'], 'bass'), ev(6, 2, ['R'], 'bass'), ev(8, 4, ['F'], 'bass'), ev(12, 4, ['O'], 'bass')],
         [ev(0, 3, ['R'], 'bass'), ev(3, 3, ['R'], 'bass'), ev(6, 2, ['F'], 'bass'), ev(8, 4, ['O'], 'bass'), ev(12, 4, ['F'], 'bass')],
         [ev(0, 4, ['R'], 'bass'), ev(4, 4, ['F'], 'bass'), ev(8, 4, ['O'], 'bass'), ev(12, 4, ['F'], 'bass')],
+        // 16分で動くベース
+        [ev(0, 2, ['R'], 'bass'), ev(3, 1, ['R'], 'bass'), ev(4, 2, ['F'], 'bass'), ev(6, 2, ['O'], 'bass'), ev(8, 2, ['R'], 'bass'), ev(11, 1, ['R'], 'bass'), ev(12, 2, ['F'], 'bass'), ev(14, 2, ['O'], 'bass')],
+        [ev(0, 1, ['R'], 'bass'), ev(1, 1, ['R'], 'bass'), ev(2, 2, ['O'], 'bass'), ev(4, 1, ['R'], 'bass'), ev(5, 1, ['R'], 'bass'), ev(6, 2, ['F'], 'bass'), ev(8, 1, ['R'], 'bass'), ev(9, 1, ['R'], 'bass'), ev(10, 2, ['O'], 'bass'), ev(12, 2, ['F'], 'bass'), ev(14, 2, ['R'], 'bass')],
       ]);
       return [...line, ev(0, 16, ['C'], 'pad')];
     }
@@ -116,7 +136,7 @@ function withFill(bar) {
 }
 
 export function generateAcc(style) {
-  const st = style || weighted(Object.keys(ACC_STYLES), [0.8, 1, 0.9, 1.3, 1.2, 1, 0.8]);
+  const st = style || weighted(Object.keys(ACC_STYLES), [0.6, 1, 0.8, 1.2, 1.1, 1, 0.8, 1.1, 1.1]);
   const a = barFor(st);
   const fill = rand() < 0.45;
   return { id: newId(), style: st, reg: pick([50, 52, 52, 55]), fill, bars: fill ? [a, withFill(a)] : [a] };
