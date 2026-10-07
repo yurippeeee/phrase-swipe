@@ -18,6 +18,8 @@ const state = {
   accDeck: [],
   accTargetId: null, // 棚の ♫ で選んだ「このフレーズだけ」の対象。null なら曲全体
   accDefault: defaultAcc(), // これからキープするフレーズに付く伴奏
+  accLib: [], // 伴奏の棚（♥した伴奏）
+  shelfTab: 'phrases',
   forcePos: null, // 次の候補をコード進行のこの位置から始める（進行の帯で指定）
   contextOn: false,
   padOn: true,
@@ -28,8 +30,8 @@ const state = {
 // ---------- 保存 ----------
 function save() {
   try {
-    const { settings, shelf, contextOn, padOn, judged, accDefault, forcePos } = state;
-    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, judged, accDefault, forcePos }));
+    const { settings, shelf, contextOn, padOn, judged, accDefault, forcePos, accLib } = state;
+    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, judged, accDefault, forcePos, accLib }));
   } catch (e) {
     /* 容量超過やプライベートモード */
   }
@@ -50,6 +52,9 @@ function load() {
     const isOldDefault = (t) => t && t.id === 'default';
     if (d.accDefault && d.accDefault.bars && !isOldDefault(d.accDefault)) state.accDefault = d.accDefault;
     for (const ph of state.shelf) if (isOldDefault(ph.acc)) ph.acc = null;
+    state.accLib = Array.isArray(d.accLib) ? d.accLib : [];
+    // 伴奏の棚が無かった頃のデータ：使っていた伴奏を棚に入れておく
+    if (!Array.isArray(d.accLib)) for (const t of [state.accDefault, ...state.shelf.map((p) => p.acc)]) addToLib(t);
     state.forcePos = Number.isInteger(d.forcePos) ? d.forcePos : null;
   } catch (e) {
     /* 壊れたデータは無視 */
@@ -136,6 +141,14 @@ function buildSeq(phrases, withAcc, accOverride) {
 const curDeck = () => (state.mode === 'acc' ? state.accDeck : state.deck);
 
 // 伴奏を合わせる対象：棚で指定したフレーズ → 直前のキープ → メロディ候補
+const isStd = (t) => !t || t.id === DEFAULT_ACC_ID || t.id === 'default';
+function addToLib(t) {
+  if (isStd(t) || state.accLib.some((x) => x.id === t.id)) return false;
+  state.accLib.push(t);
+  if (state.accLib.length > 40) state.accLib.shift();
+  return true;
+}
+
 const accSpecific = () => state.shelf.find((p) => p.id === state.accTargetId) || null;
 
 function accTarget() {
@@ -154,7 +167,7 @@ function setMode(mode) {
   state.mode = mode;
   for (const b of document.querySelectorAll('#modeSeg button')) b.classList.toggle('on', b.dataset.mode === mode);
   $('tglContext').classList.toggle('hidden', mode === 'acc');
-  $('btnAccAll').classList.toggle('hidden', mode !== 'acc' || !accSpecific());
+  $('btnAccAll').classList.toggle('hidden', mode !== 'acc');
   updateAccLabels();
   if (!$('viewSwipe').classList.contains('hidden')) renderDeck();
 }
@@ -167,9 +180,9 @@ function updateAccLabels() {
   $('tglPad2').textContent = `伴奏：${state.padOn ? 'ON' : 'OFF'}`;
 }
 
-function applyAccToAll() {
-  const t = state.accDeck[0];
+function applyAccToAll(t = state.accDeck[0]) {
   if (!t) return;
+  addToLib(t);
   for (const ph of state.shelf) ph.acc = t;
   state.accDefault = t;
   save();
@@ -349,17 +362,16 @@ function decide(kind) {
   const item = curDeck().shift();
   if (kind === 'keep' && state.mode === 'acc') {
     const one = accSpecific();
+    addToLib(item);
     if (one) {
-      // 棚の ♫ から：そのフレーズだけ。決めたら棚に戻る
+      // フレーズの ♫ から探しに来た：そのフレーズに付けて棚に戻る
       one.acc = item;
       state.accTargetId = null;
-      toast(`棚の${state.shelf.indexOf(one) + 1}番の伴奏を「${accName(item)}」に`);
+      toast(`伴奏の棚に追加し、棚の${state.shelf.indexOf(one) + 1}番に付けました`);
       setTimeout(() => showView('viewShelf'), 250);
     } else {
-      // 伴奏タブから：曲全体（棚の全フレーズ＋これからキープするフレーズ）
-      for (const ph of state.shelf) ph.acc = item;
-      state.accDefault = item;
-      toast(`曲全体の伴奏を「${accName(item)}」に（棚${state.shelf.length}フレーズ＋これから）`);
+      // 伴奏タブから：伴奏の棚に貯める（フレーズへは棚の ♫ から割り当てる）
+      toast(`伴奏の棚に追加（${state.accLib.length}個）。棚の ♫ でフレーズに付けられます`);
     }
     updateAccLabels();
   } else if (kind === 'keep') {
@@ -478,6 +490,12 @@ function renderShelf() {
   const ul = $('shelf');
   ul.innerHTML = '';
   stopSong();
+  $('phraseCount2').textContent = state.shelf.length;
+  $('accCount').textContent = state.accLib.length;
+  for (const b of $('shelfSeg').children) b.classList.toggle('on', b.dataset.tab === state.shelfTab);
+  $('shelfPhrases').classList.toggle('hidden', state.shelfTab !== 'phrases');
+  $('shelfAccs').classList.toggle('hidden', state.shelfTab !== 'accs');
+  renderAccShelf();
   $('shelfEmpty').classList.toggle('hidden', state.shelf.length > 0);
   $('btnPlaySong').disabled = !state.shelf.length;
   const bars = state.shelf.reduce((a, p) => a + p.bars, 0);
@@ -511,11 +529,7 @@ function renderShelf() {
       toast(`${k + 1} をくり返しました`);
     };
     li.querySelector('canvas').onclick = () => at() >= 0 && playRow(at());
-    li.querySelector('.accbtn').onclick = () => {
-      state.accTargetId = ph.id;
-      setMode('acc');
-      showView('viewSwipe');
-    };
+    li.querySelector('.accbtn').onclick = () => openPicker(ph);
     // 小節数が分かるよう、短いフレーズは幅も短く
     const maxBars = Math.max(...state.shelf.map((p) => p.bars));
     li.querySelector('canvas').style.width = `${(ph.bars / maxBars) * 100}%`;
@@ -564,6 +578,93 @@ function stopSong() {
   songRows = null;
   $('btnPlaySong').textContent = '▶ 通し再生';
   drawShelfRows();
+}
+
+// ---------- 伴奏の棚 ----------
+// 試聴・表示用のフレーズ：棚の最後のフレーズ（なければ進行の頭2小節・メロディなし）
+function accPreviewPhrase() {
+  const last = lastKept();
+  if (last) return last;
+  const prog = progression();
+  return { bars: 2, notes: [], chords: [prog[0], prog[1 % prog.length]] };
+}
+
+function renderAccShelf() {
+  const ul = $('accShelf');
+  ul.innerHTML = '';
+  $('accEmpty').classList.toggle('hidden', state.accLib.length > 0);
+  const base = accPreviewPhrase();
+  state.accLib.forEach((t, i) => {
+    const li = document.createElement('li');
+    li.className = 'row accrow';
+    const uses = state.shelf.filter((p) => accOf(p).id === t.id).length;
+    li.innerHTML = `<canvas></canvas><button class="play" aria-label="試聴">▶</button><button class="all">全体</button><button class="del" aria-label="削除">✕</button>
+      <span class="name">${i + 1}. ${accName(t)}</span><span class="use">${uses ? `${uses}フレーズで使用中` : '未使用'}${t.id === state.accDefault.id ? '・これからの標準' : ''}</span>`;
+    li.querySelector('.play').onclick = () => {
+      if (!audio.isUnlocked()) return;
+      stopSong();
+      const seq = buildSeq([base], true, t);
+      audio.play({ ...seq, loop: false }, state.settings.bpm);
+    };
+    li.querySelector('.all').onclick = () => {
+      applyAccToAll(t);
+      renderShelf();
+    };
+    li.querySelector('.del').onclick = () => {
+      state.accLib = state.accLib.filter((x) => x.id !== t.id);
+      save();
+      renderShelf();
+    };
+    ul.append(li);
+    drawRoll(li.querySelector('canvas'), [{ phrase: base, acc: buildSeq([base], true, t).acc, accFocus: true }], { labels: false });
+  });
+}
+
+// フレーズの ♫：伴奏の棚から選ぶ
+let pickTarget = null;
+function openPicker(ph) {
+  pickTarget = ph;
+  $('pickTitle').textContent = `棚の${state.shelf.indexOf(ph) + 1}番の伴奏`;
+  renderPickList();
+  $('accPicker').classList.add('open');
+  $('accPicker').setAttribute('aria-hidden', 'false');
+  $('pickBackdrop').classList.remove('hidden');
+}
+
+function renderPickList() {
+  const ph = pickTarget;
+  const list = $('pickList');
+  list.innerHTML = '';
+  const options = [state.accDefault, ...state.accLib.filter((t) => t.id !== state.accDefault.id)];
+  options.forEach((t) => {
+    const b = document.createElement('button');
+    const on = accOf(ph).id === t.id;
+    const label = t === state.accDefault ? `<small>標準</small> ${accName(t)}` : `${state.accLib.indexOf(t) + 1}. ${accName(t)}`;
+    b.innerHTML = `${label}<span class="check">${on ? '✓' : ''}</span>`;
+    b.classList.toggle('on', on);
+    b.onclick = () => {
+      ph.acc = t;
+      save();
+      renderPickList();
+      const k = state.shelf.indexOf(ph);
+      if (k >= 0) playRow(k);
+    };
+    list.append(b);
+  });
+  if (!state.accLib.length) {
+    const p = document.createElement('div');
+    p.className = 'pick-hint';
+    p.textContent = '伴奏の棚が空です。下のボタンからスワイプで探して♥してください。';
+    list.append(p);
+  }
+}
+
+function closePicker() {
+  $('accPicker').classList.remove('open');
+  $('accPicker').setAttribute('aria-hidden', 'true');
+  $('pickBackdrop').classList.add('hidden');
+  pickTarget = null;
+  renderShelf();
 }
 
 // ドラッグで並べ替え（タッチ対応のため Pointer Events で自前実装）
@@ -839,7 +940,20 @@ function init() {
   $('btnRepeat').onclick = repeatLast;
   $('btnEnding').onclick = endingsOfLast;
   $('btnPlayCard').onclick = togglePlay;
-  $('btnAccAll').onclick = applyAccToAll;
+  $('btnAccAll').onclick = () => applyAccToAll();
+  $('btnPickClose').onclick = closePicker;
+  $('pickBackdrop').onclick = closePicker;
+  $('btnPickSwipe').onclick = () => {
+    const ph = pickTarget;
+    closePicker();
+    state.accTargetId = ph ? ph.id : null;
+    setMode('acc');
+    showView('viewSwipe');
+  };
+  for (const b of $('shelfSeg').children) b.onclick = () => {
+    state.shelfTab = b.dataset.tab;
+    renderShelf();
+  };
   // タブから伴奏に切り替えたときは曲全体が対象
   for (const b of document.querySelectorAll('#modeSeg button')) b.onclick = () => {
     state.accTargetId = null;

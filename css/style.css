@@ -155,6 +155,27 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .primary:active { transform: scale(0.98); }
 .primary:disabled { opacity: 0.4; }
 
+/* 棚：フレーズ／伴奏 */
+.shelfpane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#shelfSeg { margin-bottom: 4px; }
+.row.accrow { grid-template-columns: 1fr 44px 52px 40px; }
+.row.accrow .name { position: absolute; left: 12px; top: 8px; font-size: 12px; font-weight: 700; color: var(--acc); pointer-events: none; }
+.row.accrow .use { position: absolute; left: 12px; bottom: 8px; font-size: 10px; color: var(--muted); pointer-events: none; }
+.row.accrow button { height: 68px; font-size: 15px; font-weight: 700; color: var(--muted); }
+.row.accrow .all { color: var(--accent); font-size: 13px; }
+
+/* 伴奏ピッカー */
+.pick-hint { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.pick-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.pick-list button {
+  display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 14px; border-radius: 12px; text-align: left;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--text); font-weight: 700;
+}
+.pick-list button small { color: var(--muted); font-weight: 600; }
+.pick-list button.on { border-color: var(--acc); background: rgba(245, 184, 74, 0.15); }
+.pick-list button .check { margin-left: auto; color: var(--acc); }
+.wide:not(.primary) { background: var(--panel-2); border: 1px solid var(--line); }
+
 /* 設定シート */
 .sheet-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 20; }
 .sheet {
@@ -215,7 +236,8 @@ input[type="text"] {
 .toast {
   position: fixed; left: 50%; top: calc(48px + var(--safe-t)); transform: translateX(-50%);
   background: var(--panel-2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 999px;
-  font-size: 14px; z-index: 40; opacity: 0; transition: opacity 0.2s; pointer-events: none; white-space: nowrap;
+  font-size: 14px; z-index: 40; opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  width: max-content; max-width: calc(100vw - 32px); text-align: center; border-radius: 16px;
 }
 .toast.show { opacity: 1; }
 

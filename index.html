@@ -7,8 +7,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Phrase Swipe</title>
-  <meta name="app-version" content="2026100710">
-  <link rel="stylesheet" href="css/style.css?v=2026100710">
+  <meta name="app-version" content="2026100711">
+  <link rel="stylesheet" href="css/style.css?v=2026100711">
 </head>
 <body>
   <div id="app">
@@ -46,12 +46,26 @@
 
     <!-- キープ棚 -->
     <main id="viewShelf" class="view hidden">
-      <div class="shelf-head">
-        <span id="shelfSummary"></span>
-        <span class="hint">≡ をドラッグで並べ替え</span>
+      <div class="modeseg" id="shelfSeg">
+        <button data-tab="phrases" class="on">フレーズ <span class="badge" id="phraseCount2">0</span></button>
+        <button data-tab="accs" data-mode="acc">伴奏 <span class="badge" id="accCount">0</span></button>
       </div>
-      <ul class="shelf" id="shelf"></ul>
-      <div class="shelf-empty" id="shelfEmpty">まだキープしたフレーズがありません。<br>「選ぶ」で右スワイプしてください。</div>
+      <div class="shelfpane" id="shelfPhrases">
+        <div class="shelf-head">
+          <span id="shelfSummary"></span>
+          <span class="hint">≡ で並べ替え・♫ で伴奏</span>
+        </div>
+        <ul class="shelf" id="shelf"></ul>
+        <div class="shelf-empty" id="shelfEmpty">まだキープしたフレーズがありません。<br>「選ぶ」で右スワイプしてください。</div>
+      </div>
+      <div class="shelfpane hidden" id="shelfAccs">
+        <div class="shelf-head">
+          <span>♥した伴奏</span>
+          <span class="hint">▶ 試聴・「全体」で曲全体に</span>
+        </div>
+        <ul class="shelf" id="accShelf"></ul>
+        <div class="shelf-empty" id="accEmpty">まだ伴奏がありません。<br>「選ぶ」の「伴奏」タブで♥すると、ここに貯まります。</div>
+      </div>
       <div class="shelf-actions">
         <button class="chip" id="tglPad2" aria-pressed="false">伴奏</button>
         <button class="chip" id="btnMidi">MIDI書き出し</button>
@@ -65,6 +79,17 @@
       <button class="tab" data-view="viewShelf">棚 <span class="badge" id="shelfCount">0</span></button>
       <button class="tab" id="btnSettings">設定</button>
     </nav>
+
+    <!-- 伴奏の棚から選ぶ -->
+    <div class="sheet-backdrop hidden" id="pickBackdrop"></div>
+    <section class="sheet" id="accPicker" aria-hidden="true">
+      <div class="sheet-grip"></div>
+      <h2 id="pickTitle">伴奏を選ぶ</h2>
+      <div class="pick-hint">タップでこのフレーズに付けて試聴します</div>
+      <div class="pick-list" id="pickList"></div>
+      <button class="wide" id="btnPickSwipe">新しい伴奏をスワイプで探す</button>
+      <button class="wide primary" id="btnPickClose">決定して閉じる</button>
+    </section>
 
     <!-- 設定シート -->
     <div class="sheet-backdrop hidden" id="sheetBackdrop"></div>
@@ -120,17 +145,17 @@
   <script type="importmap">
   {
     "imports": {
-      "./js/accomp.js": "./js/accomp.js?v=2026100710",
-      "./js/app.js": "./js/app.js?v=2026100710",
-      "./js/audio.js": "./js/audio.js?v=2026100710",
-      "./js/generator.js": "./js/generator.js?v=2026100710",
-      "./js/midi.js": "./js/midi.js?v=2026100710",
-      "./js/progressions.js": "./js/progressions.js?v=2026100710",
-      "./js/roll.js": "./js/roll.js?v=2026100710",
-      "./js/theory.js": "./js/theory.js?v=2026100710"
+      "./js/accomp.js": "./js/accomp.js?v=2026100711",
+      "./js/app.js": "./js/app.js?v=2026100711",
+      "./js/audio.js": "./js/audio.js?v=2026100711",
+      "./js/generator.js": "./js/generator.js?v=2026100711",
+      "./js/midi.js": "./js/midi.js?v=2026100711",
+      "./js/progressions.js": "./js/progressions.js?v=2026100711",
+      "./js/roll.js": "./js/roll.js?v=2026100711",
+      "./js/theory.js": "./js/theory.js?v=2026100711"
     }
   }
   </script>
-  <script type="module" src="js/app.js?v=2026100710"></script>
+  <script type="module" src="js/app.js?v=2026100711"></script>
 </body>
 </html>
