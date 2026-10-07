@@ -27,8 +27,8 @@ export const ACC_STYLES = {
   mix: '和音＋アルペジオ',
   broken: '分散',
   bassline: 'ベースライン＋パッド',
-  arp16: '16分アルペジオ',
-  funk: '16分カッティング',
+  arp16: '細かいアルペジオ',
+  funk: 'カッティング',
 };
 
 export function accName(t) {
@@ -38,19 +38,9 @@ export function accName(t) {
 
 const ev = (s, d, v, inst = 'keys') => ({ s, d, v, inst });
 
-// 'x' の位置に音を置くリズム（16分 × 16）
-const STAB_RHYTHMS = ['x...x...x...x...', 'x..x..x...x..x..', '..x...x...x...x.', 'x.x.x.x.x.x.x.x.', 'x..x..x.x..x..x.', 'x.....x...x.....', 'x...x..x..x.x...',
-  // 16分を含む刻み
-  'x.xxx.xxx.xxx.xx', 'x..x..x..x.xx.x.', 'xxx.xxx.xxx.xxx.', 'x.xx.xx.x.xx.xx.'];
-// 16分のカッティング（和音）とそれに絡むベース
-const FUNK_RHYTHMS = ['x.xx.x.xx.xx.x.x', 'xx.x.xx.x.xx.xx.', 'x..xx.x..xx.x.xx', '.xx.x.xx.xx.x.xx'];
-const FUNK_BASS = [
-  [['R', 0, 3], ['R', 3, 1], ['O', 6, 2], ['R', 8, 3], ['F', 11, 1], ['O', 14, 2]],
-  [['R', 0, 2], ['R', 3, 1], ['F', 4, 2], ['R', 7, 1], ['R', 8, 2], ['O', 10, 2], ['F', 13, 1], ['R', 14, 2]],
-  [['R', 0, 1], ['R', 2, 1], ['R', 3, 1], ['F', 6, 2], ['R', 8, 1], ['O', 10, 1], ['F', 11, 1], ['R', 12, 4]],
-];
 const ARP_ORDERS = [[0, 1, 2, 3], [0, 1, 2, 1], [0, 2, 1, 2], [0, 1, 2, 3, 4, 3, 2, 1], [0, 2, 4, 2], [2, 1, 0, 1], [0, 1, 2, 4]];
 
+// 'x' の位置に音を置くリズム（16分 × 16）
 function fromRhythm(str, v, inst, maxLen = 4) {
   const on = [];
   for (let i = 0; i < str.length; i++) if (str[i] === 'x') on.push(i);
@@ -63,62 +53,108 @@ function arpRun(from, to, rate, order, offset = 0) {
   return out;
 }
 
+// ---- リズムはメロディと同じく1拍ごとに選ぶ（16分・8分・4分・付点・休符が混ざる） ----
+// 1拍（4ステップ）のセル。負数は休符。dens は細かさの目安
+const BEAT_CELLS = [
+  { c: [4], dens: 0.1 },
+  { c: [2, 2], dens: 0.45 },
+  { c: [3, 1], dens: 0.55 },
+  { c: [1, 1, 2], dens: 0.75 },
+  { c: [2, 1, 1], dens: 0.75 },
+  { c: [1, 2, 1], dens: 0.7 },
+  { c: [1, 1, 1, 1], dens: 1.0 },
+  { c: [-2, 2], dens: 0.4 },
+  { c: [2, -2], dens: 0.3 },
+  { c: [-1, 1, 2], dens: 0.65 },
+  { c: [-1, 1, 1, 1], dens: 0.85 },
+  { c: [1, -1, 1, 1], dens: 0.85 },
+  { c: [-4], dens: 0.0 },
+];
+// 2拍（8ステップ）のセル
+const HALF_CELLS = [
+  { c: [8], dens: 0.0 },
+  { c: [6, 2], dens: 0.3 },
+  { c: [3, 3, 2], dens: 0.55 },
+  { c: [2, 4, 2], dens: 0.45 },
+  { c: [3, 3, 1, 1], dens: 0.75 },
+];
+
+function chooseCell(cells, density) {
+  return weighted(cells, cells.map((x) => Math.exp(-Math.abs(x.dens - density) * 4) * (x.c[0] === -4 ? 0.25 : 1))).c;
+}
+
+// 1小節ぶんのリズム [{s,d}]
+function mixedRhythm(density) {
+  const out = [];
+  let s = 0;
+  while (s < 16) {
+    let cell = s % 8 === 0 && rand() < 0.2 ? chooseCell(HALF_CELLS, density) : chooseCell(BEAT_CELLS, density);
+    // 小節の頭は鳴らすことが多い
+    if (s === 0 && cell[0] < 0 && rand() < 0.7) cell = chooseCell(BEAT_CELLS.filter((x) => x.c[0] > 0), density);
+    for (const v of cell) {
+      if (v > 0) out.push({ s, d: v });
+      s += Math.abs(v);
+    }
+  }
+  return out.length >= 2 ? out : mixedRhythm(Math.min(1, density + 0.2));
+}
+
+// ベースのリズム（半小節ごと）
+const BASS_CELLS = {
+  steady: [[[8], 2], [[4, 4], 2], [[6, 2], 1], [[4, 2, 2], 1]],
+  move: [[[4, 4], 1.5], [[3, 3, 2], 1.5], [[2, 2, 4], 1], [[6, 2], 1], [[4, 2, 2], 1], [[3, 1, 4], 1]],
+  busy: [[[3, 1, 2, 2], 1.5], [[2, 1, 1, 4], 1], [[1, 1, 2, 2, 2], 1], [[3, 3, 2], 1.5], [[2, 2, 2, 2], 1], [[1, 1, 1, 1, 4], 0.6]],
+};
+function bassLine(kind) {
+  const out = [];
+  for (const half of [0, 8]) {
+    const cells = BASS_CELLS[kind];
+    let s = half;
+    for (const d of weighted(cells.map((c) => c[0]), cells.map((c) => c[1]))) {
+      const v = s === 0 ? 'R' : weighted(['R', 'O', 'F'], [0.5, 0.25, 0.25]);
+      out.push(ev(s, d, [v], 'bass'));
+      s += d;
+    }
+  }
+  return out;
+}
+
+// スタイル = 和音で鳴らす割合・細かさの傾向・ベースの動き
+const FLAVORS = {
+  stab: { chord: 0.95, dens: 0.45, bass: 'steady' },
+  funk: { chord: 0.85, dens: 0.8, bass: 'busy', staccato: true },
+  arp: { chord: 0.05, dens: 0.5, bass: 'steady' },
+  arp16: { chord: 0.05, dens: 0.8, bass: 'steady' },
+  mix: { chord: 0.5, dens: 0.55, bass: 'steady' },
+  broken: { chord: 0.25, dens: 0.6, bass: 'move', shuffle: true },
+};
+
+function flavoredBar(f) {
+  const density = Math.max(0, Math.min(1, f.dens + (rand() - 0.5) * 0.3));
+  const order = pick(ARP_ORDERS);
+  let k = 0;
+  const notes = mixedRhythm(density).map(({ s, d }) => {
+    const dur = f.staccato ? Math.min(d, rand() < 0.5 ? 1 : 2) : d;
+    if (rand() < f.chord) return ev(s, dur, ['C']);
+    const tone = f.shuffle ? pick([0, 1, 2, 3]) : order[k++ % order.length];
+    return ev(s, dur, [tone]);
+  });
+  return [...bassLine(f.bass), ...notes];
+}
+
 // 1小節ぶんの型をスタイルごとに作る
 function barFor(style) {
+  if (FLAVORS[style]) return flavoredBar(FLAVORS[style]);
   switch (style) {
     case 'pad':
       return [ev(0, 16, ['R'], 'bass'), ev(0, 16, ['C'], 'pad')];
-    case 'stab': {
-      const r = pick(STAB_RHYTHMS);
-      const bass = rand() < 0.5 ? [ev(0, 16, ['R'], 'bass')] : [ev(0, 8, ['R'], 'bass'), ev(8, 8, [pick(['R', 'F'])], 'bass')];
-      return [...bass, ...fromRhythm(r, ['C'], 'keys', rand() < 0.5 ? 2 : 4)];
-    }
     case 'oompah':
       return rand() < 0.5
         ? [ev(0, 4, ['R'], 'bass'), ev(4, 3, ['C']), ev(8, 4, ['F'], 'bass'), ev(12, 3, ['C'])]
         : [ev(0, 2, ['R'], 'bass'), ev(2, 2, ['C']), ev(4, 2, ['F'], 'bass'), ev(6, 2, ['C']), ev(8, 2, ['R'], 'bass'), ev(10, 2, ['C']), ev(12, 2, ['F'], 'bass'), ev(14, 2, ['C'])];
-    case 'arp': {
-      const rate = weighted([2, 1, 4], [2, 2, 0.5]);
-      return [ev(0, 16, ['R'], 'bass'), ...arpRun(0, 16, rate, pick(ARP_ORDERS))];
-    }
-    case 'mix': {
-      const order = pick(ARP_ORDERS);
-      return rand() < 0.5
-        ? [ev(0, 16, ['R'], 'bass'), ev(0, 8, ['C']), ...arpRun(8, 16, 2, order)]
-        : [ev(0, 16, ['R'], 'bass'), ...arpRun(0, 8, 2, order), ev(8, 6, ['C'])];
-    }
-    case 'broken': {
-      // 単音を不規則なリズムで。拍頭には和音を少しだけ
-      const out = [ev(0, 8, ['R'], 'bass')];
-      const r = pick(['x..x..x.x..x.x..', 'x.x..x..x.x..x..', '.x.x.x...x.x.x..', 'x..x...xx..x..x.']);
-      let k = 0;
-      for (let s = 0; s < 16; s++) {
-        if (r[s] !== 'x') continue;
-        if (s === 8 && rand() < 0.5) out.push(ev(s, 4, ['C']));
-        else out.push(ev(s, 2, [pick([0, 1, 2, 3, 2, 1].slice(k % 3, k % 3 + 3))]));
-        k++;
-      }
-      out.push(ev(8, 8, [pick(['R', 'F'])], 'bass'));
-      return out;
-    }
-    case 'arp16':
-      return [ev(0, 8, ['R'], 'bass'), ev(8, 8, [pick(['R', 'F', 'O'])], 'bass'), ...arpRun(0, 16, 1, pick(ARP_ORDERS))];
-    case 'funk': {
-      const bass = pick(FUNK_BASS).map(([v, st, d]) => ev(st, d, [v], 'bass'));
-      return [...bass, ...fromRhythm(pick(FUNK_RHYTHMS), ['C'], 'keys', 1)];
-    }
     case 'bassline':
-    default: {
-      const line = pick([
-        [ev(0, 6, ['R'], 'bass'), ev(6, 2, ['R'], 'bass'), ev(8, 4, ['F'], 'bass'), ev(12, 4, ['O'], 'bass')],
-        [ev(0, 3, ['R'], 'bass'), ev(3, 3, ['R'], 'bass'), ev(6, 2, ['F'], 'bass'), ev(8, 4, ['O'], 'bass'), ev(12, 4, ['F'], 'bass')],
-        [ev(0, 4, ['R'], 'bass'), ev(4, 4, ['F'], 'bass'), ev(8, 4, ['O'], 'bass'), ev(12, 4, ['F'], 'bass')],
-        // 16分で動くベース
-        [ev(0, 2, ['R'], 'bass'), ev(3, 1, ['R'], 'bass'), ev(4, 2, ['F'], 'bass'), ev(6, 2, ['O'], 'bass'), ev(8, 2, ['R'], 'bass'), ev(11, 1, ['R'], 'bass'), ev(12, 2, ['F'], 'bass'), ev(14, 2, ['O'], 'bass')],
-        [ev(0, 1, ['R'], 'bass'), ev(1, 1, ['R'], 'bass'), ev(2, 2, ['O'], 'bass'), ev(4, 1, ['R'], 'bass'), ev(5, 1, ['R'], 'bass'), ev(6, 2, ['F'], 'bass'), ev(8, 1, ['R'], 'bass'), ev(9, 1, ['R'], 'bass'), ev(10, 2, ['O'], 'bass'), ev(12, 2, ['F'], 'bass'), ev(14, 2, ['R'], 'bass')],
-      ]);
-      return [...line, ev(0, 16, ['C'], 'pad')];
-    }
+    default:
+      return [...bassLine(rand() < 0.5 ? 'move' : 'busy'), ev(0, 16, ['C'], 'pad')];
   }
 }
 
