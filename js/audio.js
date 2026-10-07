@@ -27,31 +27,55 @@ export async function unlock() {
   unlocked = true;
 }
 
-function setup() {
-  transport = Tone.getTransport();
-  const reverb = new Tone.Reverb({ decay: 2.2, wet: 0.22 }).toDestination();
-  lead = new Tone.PolySynth(Tone.Synth, {
+// 音量バランス（dB）。スマホのスピーカーでの聞こえ方を基準に調整
+export const LEVELS = { lead: -8, pad: -15, keys: -8, bass: -9 };
+
+// 楽器一式を作る（Tone.Offline の中でも使えるように分けている）
+export function createInstruments() {
+  const reverb = new Tone.Reverb({ decay: 2.2, wet: 0.2 }).toDestination();
+  // 伴奏はまとめて音量を変えられるようにバスを通す
+  const accBus = new Tone.Volume(0).toDestination();
+  const accReverb = new Tone.Reverb({ decay: 2.2, wet: 0.15 }).connect(accBus);
+  const lead = new Tone.PolySynth(Tone.Synth, {
     oscillator: { type: 'triangle' },
     envelope: { attack: 0.005, decay: 0.15, sustain: 0.4, release: 0.25 },
   }).connect(reverb);
-  lead.volume.value = -6;
-  const filter = new Tone.Filter({ type: 'lowpass', frequency: 1100, Q: 0.4 }).connect(reverb);
-  pad = new Tone.PolySynth(Tone.Synth, {
+  lead.volume.value = LEVELS.lead;
+  const padFilter = new Tone.Filter({ type: 'lowpass', frequency: 1800, Q: 0.4 }).connect(accReverb);
+  const pad = new Tone.PolySynth(Tone.Synth, {
     oscillator: { type: 'fatsawtooth', count: 3, spread: 18 },
-    envelope: { attack: 0.25, decay: 0.4, sustain: 0.75, release: 0.9 },
-  }).connect(filter);
-  pad.volume.value = -22;
-  keys = new Tone.PolySynth(Tone.Synth, {
-    oscillator: { type: 'fattriangle', count: 2, spread: 12 },
-    envelope: { attack: 0.004, decay: 0.5, sustain: 0.25, release: 0.5 },
-  }).connect(reverb);
-  keys.volume.value = -17;
-  const bassFilter = new Tone.Filter({ type: 'lowpass', frequency: 700 }).toDestination();
-  bass = new Tone.PolySynth(Tone.Synth, {
-    oscillator: { type: 'triangle' },
-    envelope: { attack: 0.01, decay: 0.3, sustain: 0.6, release: 0.3 },
+    envelope: { attack: 0.12, decay: 0.4, sustain: 0.8, release: 0.9 },
+  }).connect(padFilter);
+  pad.volume.value = LEVELS.pad;
+  const keys = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'fatsawtooth', count: 2, spread: 10 },
+    envelope: { attack: 0.004, decay: 0.45, sustain: 0.35, release: 0.4 },
+  });
+  const keysFilter = new Tone.Filter({ type: 'lowpass', frequency: 2400, Q: 0.3 }).connect(accReverb);
+  keys.connect(keysFilter);
+  keys.volume.value = LEVELS.keys;
+  // ベースは倍音を残して、低音の出ないスマホのスピーカーでも輪郭が聞こえるように
+  const bassFilter = new Tone.Filter({ type: 'lowpass', frequency: 1100, Q: 1 }).connect(accBus);
+  const bass = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'sawtooth' },
+    envelope: { attack: 0.005, decay: 0.25, sustain: 0.7, release: 0.2 },
   }).connect(bassFilter);
-  bass.volume.value = -10;
+  bass.volume.value = LEVELS.bass;
+  return { lead, pad, keys, bass, accBus };
+}
+
+let accBus;
+function setup() {
+  transport = Tone.getTransport();
+  ({ lead, pad, keys, bass, accBus } = createInstruments());
+  accBus.volume.value = accGain;
+}
+
+// 伴奏全体の音量（dB、設定から）
+let accGain = 0;
+export function setAccVolume(db) {
+  accGain = db;
+  if (accBus) accBus.volume.value = db;
 }
 
 export function setBpm(bpm) {

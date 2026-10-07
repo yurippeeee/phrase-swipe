@@ -138,7 +138,7 @@ export function accVariants(t, count = 5) {
 // コードに当てはめて音（{p,s,d,inst}）にする
 export function realizeBar(t, chord, barIndex) {
   const bar = t.bars[barIndex % t.bars.length];
-  const root = 36 + chord.rootPc; // C2〜B2
+  const root = 40 + ((chord.rootPc - 4 + 12) % 12); // E2〜D#3（スマホでも聞こえる高さ）
   // 段: reg 以上のコードトーンを下から順に
   const ladder = [];
   for (let p = t.reg; ladder.length < 7; p++) if (chord.pcs.includes(p % 12)) ladder.push(p);

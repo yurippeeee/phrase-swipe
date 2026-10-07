@@ -11,7 +11,7 @@ const STORE_KEY = 'phraseSwipe.v1';
 const SETTINGS_VER = 2;
 
 const state = {
-  settings: { key: 0, scale: 'major', bpm: 100, prog: 'I-V-vi-IV', bars: 'random' },
+  settings: { key: 0, scale: 'major', bpm: 100, prog: 'I-V-vi-IV', bars: 'random', accVol: 0 },
   deck: [],
   shelf: [],
   mode: 'melody', // 'melody' | 'acc'（伴奏を選ぶ）
@@ -579,6 +579,7 @@ function syncSettingsForm() {
     keyEl.append(b);
   });
   $('setBpm').value = draft.bpm;
+  $('setAccVol').value = draft.accVol;
   $('setProg').value = draft.prog;
   progStart = null;
   refreshForm();
@@ -624,6 +625,7 @@ function refreshForm() {
   for (const b of $('setScale').children) b.classList.toggle('on', b.dataset.v === draft.scale);
   for (const b of $('setBars').children) b.classList.toggle('on', b.dataset.v === String(draft.bars));
   $('bpmOut').textContent = draft.bpm;
+  $('accVolOut').textContent = `${draft.accVol > 0 ? '+' : ''}${draft.accVol} dB`;
   const chords = parseProgression(draft.prog, draft.key, draft.scale);
   const pv = $('progPreview');
   pv.classList.toggle('err', !chords.length);
@@ -655,6 +657,14 @@ function bindSettings() {
   });
   $('setBpm').addEventListener('input', (e) => {
     draft.bpm = +e.target.value;
+    refreshForm();
+  });
+  // 伴奏の音量はその場で聞き比べられるよう即反映（閉じても保存）
+  $('setAccVol').addEventListener('input', (e) => {
+    draft.accVol = +e.target.value;
+    state.settings.accVol = draft.accVol;
+    audio.setAccVolume(draft.accVol);
+    save();
     refreshForm();
   });
   $('setProg').addEventListener('input', (e) => {
@@ -760,6 +770,7 @@ function init() {
   renderDeck();
   requestAnimationFrame(frame);
 
+  audio.setAccVolume(state.settings.accVol || 0);
   $('unlock').addEventListener('click', async () => {
     await audio.unlock();
     $('unlock').remove();
