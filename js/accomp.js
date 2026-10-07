@@ -122,8 +122,16 @@ export function generateAcc(style) {
   return { id: newId(), style: st, reg: pick([50, 52, 52, 55]), fill, bars: fill ? [a, withFill(a)] : [a] };
 }
 
+// 伴奏を選ぶ前の標準：8分で刻む和音＋拍の頭のベース（テンポが伴奏でも分かるように）
+export const DEFAULT_ACC_ID = 'default2';
 export function defaultAcc() {
-  return { id: 'default', style: 'pad', reg: 52, fill: false, bars: [barFor('pad')] };
+  return {
+    id: DEFAULT_ACC_ID,
+    style: 'stab',
+    reg: 52,
+    fill: false,
+    bars: [[ev(0, 8, ['R'], 'bass'), ev(8, 8, ['F'], 'bass'), ...fromRhythm('x.x.x.x.x.x.x.x.', ['C'], 'keys', 2)]],
+  };
 }
 
 // 「これに近いの」：同じスタイルで作り直し・フィルの有無・音域違い

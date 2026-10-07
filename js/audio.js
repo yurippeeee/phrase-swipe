@@ -82,6 +82,7 @@ export function setBpm(bpm) {
   if (transport) transport.bpm.value = bpm;
 }
 
+
 // seq: { steps, notes:[{p,s,d}], acc:[{p,s,d,inst}], loop, onEnd }
 export function play(seq, bpm) {
   if (!unlocked) return;

@@ -1,5 +1,5 @@
 import { KEY_NAMES, parseProgression } from './theory.js';
-import { generateAcc, defaultAcc, accVariants, accName, realizeBar } from './accomp.js';
+import { generateAcc, defaultAcc, DEFAULT_ACC_ID, accVariants, accName, realizeBar } from './accomp.js';
 import { START_DEGREES, PROGRESSIONS, PROG_NAMES } from './progressions.js';
 import { generatePhrase, makeVariants, copyPhrase, endingVariants, transposePhrase, originLabel, STEPS_PER_BAR } from './generator.js';
 import * as audio from './audio.js';
@@ -46,7 +46,10 @@ function load() {
     state.contextOn = !!d.contextOn;
     state.padOn = d.padOn !== false;
     state.judged = d.judged || 0;
-    if (d.accDefault && d.accDefault.bars) state.accDefault = d.accDefault;
+    // 一度も伴奏を選んでいなければ（旧標準のパッドのまま）新しい標準に置き換える
+    const isOldDefault = (t) => t && t.id === 'default';
+    if (d.accDefault && d.accDefault.bars && !isOldDefault(d.accDefault)) state.accDefault = d.accDefault;
+    for (const ph of state.shelf) if (isOldDefault(ph.acc)) ph.acc = null;
     state.forcePos = Number.isInteger(d.forcePos) ? d.forcePos : null;
   } catch (e) {
     /* 壊れたデータは無視 */
