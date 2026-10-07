@@ -34,4 +34,6 @@
 
 Settings → Pages → Branch を選んで保存するだけで動きます。ローカルでは `npx http-server .` などで配信してください（ES Modules のため `file://` 直開きは不可）。
 
+更新時は `index.html` の `app-version` と各 `?v=` を同じ値に上げてください。GitHub Pages のキャッシュで古いJSが混ざるのを防ぎます（設定画面の下に表示されるバージョンで確認できます）。
+
 iOS はマナーモード時に音が出ない場合があります（Safari 16.4+ は自動で回避を試みます）。

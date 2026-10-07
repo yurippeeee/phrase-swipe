@@ -734,6 +734,8 @@ function frame() {
 }
 
 function init() {
+  const ver = document.querySelector('meta[name="app-version"]');
+  $('appVersion').textContent = `ver ${ver ? ver.content : '?'}`;
   load();
   updateInfo();
   updateCounts();
