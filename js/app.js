@@ -1,4 +1,6 @@
-import { KEY_NAMES, parseProgression, voiceChord } from './theory.js';
+import { KEY_NAMES, parseProgression } from './theory.js';
+import { generateAcc, defaultAcc, accVariants, accName, realizeBar } from './accomp.js';
+import { START_DEGREES, PROGRESSIONS, PROG_NAMES } from './progressions.js';
 import { generatePhrase, makeVariants, copyPhrase, endingVariants, originLabel, STEPS_PER_BAR } from './generator.js';
 import * as audio from './audio.js';
 import { drawRoll } from './roll.js';
@@ -8,12 +10,14 @@ const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'phraseSwipe.v1';
 const SETTINGS_VER = 2;
 
-const PRESETS = ['I-V-vi-IV', 'I-vi-IV-V', 'vi-IV-I-V', 'ii-V-I-vi', 'I-IV-V-IV', 'i-VI-III-VII', 'i-iv-v-i', 'i-VII-VI-VII'];
-
 const state = {
   settings: { key: 0, scale: 'major', bpm: 100, prog: 'I-V-vi-IV', bars: 'random' },
   deck: [],
   shelf: [],
+  mode: 'melody', // 'melody' | 'acc'（伴奏を選ぶ）
+  accDeck: [],
+  accTargetId: null, // 伴奏を選ぶ対象のフレーズ
+  accDefault: defaultAcc(), // これからキープするフレーズに付く伴奏
   contextOn: false,
   padOn: true,
   cardPlaying: true,
@@ -23,8 +27,8 @@ const state = {
 // ---------- 保存 ----------
 function save() {
   try {
-    const { settings, shelf, contextOn, padOn, judged } = state;
-    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, judged }));
+    const { settings, shelf, contextOn, padOn, judged, accDefault } = state;
+    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, judged, accDefault }));
   } catch (e) {
     /* 容量超過やプライベートモード */
   }
@@ -41,6 +45,7 @@ function load() {
     state.contextOn = !!d.contextOn;
     state.padOn = d.padOn !== false;
     state.judged = d.judged || 0;
+    if (d.accDefault && d.accDefault.bars) state.accDefault = d.accDefault;
   } catch (e) {
     /* 壊れたデータは無視 */
   }
@@ -88,27 +93,67 @@ function fillDeck() {
 }
 
 // ---------- 再生用シーケンス ----------
-function buildSeq(phrases, withPad) {
+const accOf = (ph) => ph.acc || state.accDefault;
+
+// accOverride: 伴奏の候補を試すときに、フレーズの伴奏の代わりに使う型
+function buildSeq(phrases, withAcc, accOverride) {
   const notes = [];
-  const chords = [];
+  const acc = [];
   const ranges = [];
   let off = 0;
   for (const ph of phrases) {
     for (const n of ph.notes) notes.push({ p: n.p, s: n.s + off, d: n.d });
+    const t = accOverride || accOf(ph);
     for (let b = 0; b < ph.bars; b++) {
       const c = ph.chords[b % ph.chords.length];
-      if (c) chords.push({ s: off + b * STEPS_PER_BAR, d: STEPS_PER_BAR, notes: voiceChord(c) });
+      if (c) for (const a of realizeBar(t, c, b)) acc.push({ ...a, s: a.s + off + b * STEPS_PER_BAR });
     }
     ranges.push([off, off + ph.bars * STEPS_PER_BAR]);
     off += ph.bars * STEPS_PER_BAR;
   }
-  return { steps: off, notes, chords: withPad ? chords : [], allChords: chords, ranges };
+  return { steps: off, notes, acc: withAcc ? acc : [], allAcc: acc, ranges };
+}
+
+// ---------- 伴奏モード ----------
+const curDeck = () => (state.mode === 'acc' ? state.accDeck : state.deck);
+
+// 伴奏を合わせる対象：棚で指定したフレーズ → 直前のキープ → メロディ候補
+function accTarget() {
+  const t = state.shelf.find((p) => p.id === state.accTargetId) || lastKept();
+  if (t) return t;
+  fillDeck();
+  return state.deck[0];
+}
+
+function fillCur() {
+  if (state.mode === 'acc') while (state.accDeck.length < 3) state.accDeck.push(generateAcc());
+  else fillDeck();
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  for (const b of document.querySelectorAll('#modeSeg button')) b.classList.toggle('on', b.dataset.mode === mode);
+  $('tglContext').classList.toggle('hidden', mode === 'acc');
+  $('btnAccAll').classList.toggle('hidden', mode !== 'acc');
+  if (!$('viewSwipe').classList.contains('hidden')) renderDeck();
+}
+
+// 選んでいる伴奏を棚の全フレーズに
+function applyAccToAll() {
+  const t = state.accDeck[0];
+  if (!t) return;
+  for (const ph of state.shelf) ph.acc = t;
+  state.accDefault = t;
+  save();
+  toast(`棚の全フレーズを「${accName(t)}」に`);
 }
 
 // ---------- カード ----------
 const deckEl = $('deck');
 
-function cardEl(phrase, behind) {
+function cardEl(item, behind) {
+  if (state.mode === 'acc') return accCardEl(item, behind);
+  const phrase = item;
   const el = document.createElement('div');
   el.className = 'card' + (behind ? ' behind' : '');
   el.innerHTML = `
@@ -124,24 +169,46 @@ function cardEl(phrase, behind) {
   return el;
 }
 
+function accCardEl(t, behind) {
+  const el = document.createElement('div');
+  el.className = 'card' + (behind ? ' behind' : '');
+  el.innerHTML = `
+    <div class="card-head"><span class="tag acc"></span><span class="ctx"></span><span class="num"></span></div>
+    <canvas></canvas>
+    <div class="card-foot"><span>← ボツ</span><span>タップで再生/停止</span><span>この伴奏 →</span></div>
+    <div class="stamp keep">KEEP</div><div class="stamp nope">NOPE</div>`;
+  el.querySelector('.tag').textContent = accName(t);
+  const target = accTarget();
+  const k = state.shelf.indexOf(target);
+  el.querySelector('.num').textContent = k >= 0 ? `棚の${k + 1}番` : 'メロディ候補';
+  el._acc = t;
+  el._phrase = target;
+  el._segs = [{ phrase: target, acc: buildSeq([target], true, t).acc, accFocus: true }];
+  return el;
+}
+
+function segmentsFor(el) {
+  return el._segs || cardSegments(el._phrase);
+}
+
 function cardSegments(phrase) {
   const last = lastKept();
   return state.contextOn && last ? [{ phrase: last, faded: true }, { phrase }] : [{ phrase }];
 }
 
 function renderBack() {
-  fillDeck();
+  fillCur();
   const old = deckEl.querySelector('.card.behind');
-  const back = cardEl(state.deck[1], true);
+  const back = cardEl(curDeck()[1], true);
   if (old) old.replaceWith(back);
   else deckEl.prepend(back);
-  drawRoll(back.querySelector('canvas'), [{ phrase: state.deck[1] }]);
+  drawRoll(back.querySelector('canvas'), back._segs || [{ phrase: back._phrase }]);
 }
 
 function renderDeck() {
-  fillDeck();
+  fillCur();
   deckEl.innerHTML = '';
-  const top = cardEl(state.deck[0], false);
+  const top = cardEl(curDeck()[0], false);
   deckEl.append(top);
   renderBack();
   updateCtxLabel();
@@ -153,7 +220,8 @@ function renderDeck() {
 function updateCtxLabel() {
   const top = topCard();
   if (!top) return;
-  top.querySelector('.ctx').textContent = state.contextOn ? (lastKept() ? '◀ 直前のキープから' : '（棚が空）') : '';
+  if (state.mode === 'acc') top.querySelector('.ctx').textContent = '伴奏を選ぶ';
+  else top.querySelector('.ctx').textContent = state.contextOn ? (lastKept() ? '◀ 直前のキープから' : '（棚が空）') : '';
 }
 
 function topCard() {
@@ -161,13 +229,14 @@ function topCard() {
 }
 
 function playCurrent() {
-  const ph = state.deck[0];
-  if (!ph || !audio.isUnlocked() || $('viewSwipe').classList.contains('hidden')) return;
+  const item = curDeck()[0];
+  if (!item || !audio.isUnlocked() || $('viewSwipe').classList.contains('hidden')) return;
   if (!state.cardPlaying) {
     audio.stop();
     return;
   }
-  const seq = buildSeq(cardSegments(ph).map((s) => s.phrase), state.padOn);
+  const seq =
+    state.mode === 'acc' ? buildSeq([accTarget()], true, item) : buildSeq(cardSegments(item).map((s) => s.phrase), state.padOn);
   audio.play({ ...seq, loop: true }, state.settings.bpm);
 }
 
@@ -222,11 +291,20 @@ function decide(kind) {
   const el = topCard();
   if (!el || deciding) return;
   deciding = true;
-  const ph = state.deck.shift();
-  if (kind === 'keep') {
+  const item = curDeck().shift();
+  if (kind === 'keep' && state.mode === 'acc') {
+    // 対象フレーズの伴奏にし、これからキープするフレーズにも使う
+    const target = accTarget();
+    if (state.shelf.includes(target)) target.acc = item;
+    state.accDefault = item;
+    toast(`伴奏「${accName(item)}」に決定`);
+  } else if (kind === 'keep') {
+    const ph = item;
+    ph.acc = ph.acc || (ph.origin === 'ending' && lastKept() ? lastKept().acc : null) || state.accDefault;
     state.shelf.push(ph);
     // 担当コードが変わるので、合わなくなった候補は作り直す（語尾違いを選んだら他の語尾違いは片付ける）
     state.deck = state.deck.filter((p) => fitsSlot(p) && !(ph.origin === 'ending' && p.origin === 'ending'));
+    state.accTargetId = null;
     toast(`キープ（${state.shelf.length}）`);
   }
   const dir = kind === 'keep' ? 1 : -1;
@@ -253,7 +331,7 @@ function runLength() {
 
 function updateLastBar() {
   const last = lastKept();
-  $('lastBar').classList.toggle('hidden', !last);
+  $('lastBar').classList.toggle('hidden', !last || state.mode === 'acc');
   if (!last) return;
   $('lastCount').textContent = `×${runLength()}`;
   drawRoll($('lastRoll'), [{ phrase: last }], { labels: false });
@@ -283,10 +361,10 @@ function endingsOfLast() {
 }
 
 function similar() {
-  const ph = state.deck[0];
-  if (!ph || deciding) return;
-  const vars = makeVariants(ph, 5);
-  state.deck.splice(1, 0, ...vars);
+  const item = curDeck()[0];
+  if (!item || deciding) return;
+  const vars = state.mode === 'acc' ? accVariants(item, 5) : makeVariants(item, 5);
+  curDeck().splice(1, 0, ...vars);
   renderBack();
   toast(`近い候補を${vars.length}つ追加`);
 }
@@ -338,7 +416,7 @@ function renderShelf() {
     // 行はフレーズそのものを持ち、操作時に現在の位置を引き直す（古い番号で別のフレーズを触らない）
     li._phrase = ph;
     const at = () => state.shelf.indexOf(ph);
-    li.innerHTML = `<button class="handle" aria-label="並べ替え">≡</button><canvas></canvas><button class="dup" aria-label="くり返し（複製）">⧉</button><button class="del" aria-label="削除">✕</button><span class="idx">${i + 1}</span>`;
+    li.innerHTML = `<button class="handle" aria-label="並べ替え">≡</button><canvas></canvas><button class="accbtn" aria-label="伴奏を選ぶ">♫</button><button class="dup" aria-label="くり返し（複製）">⧉</button><button class="del" aria-label="削除">✕</button><span class="idx">${i + 1} · ${accName(accOf(ph))}</span>`;
     li.querySelector('.del').onclick = () => {
       if (at() < 0) return;
       state.shelf.splice(at(), 1);
@@ -356,6 +434,11 @@ function renderShelf() {
       toast(`${k + 1} をくり返しました`);
     };
     li.querySelector('canvas').onclick = () => at() >= 0 && playRow(at());
+    li.querySelector('.accbtn').onclick = () => {
+      state.accTargetId = ph.id;
+      setMode('acc');
+      showView('viewSwipe');
+    };
     // 小節数が分かるよう、短いフレーズは幅も短く
     const maxBars = Math.max(...state.shelf.map((p) => p.bars));
     li.querySelector('canvas').style.width = `${(ph.bars / maxBars) * 100}%`;
@@ -462,7 +545,14 @@ function exportMidi() {
     return;
   }
   const seq = buildSeq(state.shelf, true);
-  const bytes = buildMidi({ bpm: state.settings.bpm, melody: seq.notes, chords: seq.allChords });
+  const bytes = buildMidi({
+    bpm: state.settings.bpm,
+    tracks: [
+      { name: 'Melody', program: 0, notes: seq.notes, vel: 100 },
+      { name: 'Accomp', program: 0, notes: seq.allAcc.filter((a) => a.inst !== 'bass'), vel: 70 },
+      { name: 'Bass', program: 33, notes: seq.allAcc.filter((a) => a.inst === 'bass'), vel: 90 },
+    ],
+  });
   const d = new Date();
   const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
   downloadMidi(bytes, `phrase-swipe-${stamp}.mid`);
@@ -490,7 +580,43 @@ function syncSettingsForm() {
   });
   $('setBpm').value = draft.bpm;
   $('setProg').value = draft.prog;
+  progStart = null;
   refreshForm();
+}
+
+// 先頭コードを選ぶと、そこから続く4コード進行の一覧を出す
+let progStart = null;
+function renderProgList() {
+  const starts = START_DEGREES[draft.scale];
+  const first = draft.prog.split(/[\s\-–,|]+/)[0];
+  if (!progStart || !starts.includes(progStart)) progStart = starts.includes(first) ? first : starts[0];
+  const startEl = $('progStart');
+  startEl.innerHTML = '';
+  for (const d of starts) {
+    const b = document.createElement('button');
+    const c = parseProgression(d, draft.key, draft.scale)[0];
+    b.innerHTML = `${d}<small>${c ? c.label : ''}</small>`;
+    b.classList.toggle('on', d === progStart);
+    b.onclick = () => {
+      progStart = d;
+      refreshForm();
+    };
+    startEl.append(b);
+  }
+  const list = $('progList');
+  list.innerHTML = '';
+  for (const p of PROGRESSIONS[draft.scale][progStart] || []) {
+    const b = document.createElement('button');
+    const names = parseProgression(p, draft.key, draft.scale).map((c) => c.label).join(' ');
+    b.innerHTML = `<b>${p}</b><span>${names}</span>${PROG_NAMES[p] ? `<em>${PROG_NAMES[p]}</em>` : ''}`;
+    b.classList.toggle('on', p === draft.prog);
+    b.onclick = () => {
+      draft.prog = p;
+      $('setProg').value = p;
+      refreshForm();
+    };
+    list.append(b);
+  }
 }
 
 function refreshForm() {
@@ -501,21 +627,11 @@ function refreshForm() {
   const chords = parseProgression(draft.prog, draft.key, draft.scale);
   const pv = $('progPreview');
   pv.classList.toggle('err', !chords.length);
-  pv.textContent = chords.length ? chords.map((c) => c.label).join(' → ') : '度数を読み取れません（例: I-V-vi-IV）';
+  pv.textContent = chords.length ? `${chords.length}コード: ${chords.map((c) => c.label).join(' → ')}` : '度数を読み取れません（例: I-V-vi-IV）';
+  renderProgList();
 }
 
 function bindSettings() {
-  for (const p of PRESETS) {
-    const b = document.createElement('button');
-    b.textContent = p;
-    b.onclick = () => {
-      draft.prog = p;
-      draft.scale = p.startsWith('i-') ? 'minor' : 'major';
-      $('setProg').value = p;
-      refreshForm();
-    };
-    $('progPresets').append(b);
-  }
   $('setKey').addEventListener('click', (e) => {
     if (e.target.dataset.v == null) return;
     draft.key = +e.target.dataset.v;
@@ -524,6 +640,12 @@ function bindSettings() {
   $('setScale').addEventListener('click', (e) => {
     if (!e.target.dataset.v) return;
     draft.scale = e.target.dataset.v;
+    // スケールを変えたら、そのスケールの先頭コードの定番に
+    if (!PROGRESSIONS[draft.scale][draft.prog.split(/[\s\-–,|]+/)[0]]) {
+      draft.prog = PROGRESSIONS[draft.scale][START_DEGREES[draft.scale][0]][0];
+      $('setProg').value = draft.prog;
+    }
+    progStart = null;
     refreshForm();
   });
   $('setBars').addEventListener('click', (e) => {
@@ -544,6 +666,7 @@ function bindSettings() {
     const regen = ['key', 'scale', 'prog', 'bars'].some((k) => draft[k] !== state.settings[k]);
     state.settings = { ...draft };
     if (regen) state.deck = [];
+    state.accDeck = [];
     save();
     updateInfo();
     openSheet(false);
@@ -593,7 +716,7 @@ function showView(id) {
 function frame() {
   if (!$('viewSwipe').classList.contains('hidden')) {
     const top = topCard();
-    if (top) drawRoll(top.querySelector('canvas'), cardSegments(top._phrase), { playStep: deciding ? -1 : audio.currentStep() });
+    if (top) drawRoll(top.querySelector('canvas'), segmentsFor(top), { playStep: deciding ? -1 : audio.currentStep() });
   } else if (songPlaying) {
     drawShelfRows(audio.currentStep());
   }
@@ -615,6 +738,8 @@ function init() {
   $('btnRepeat').onclick = repeatLast;
   $('btnEnding').onclick = endingsOfLast;
   $('btnPlayCard').onclick = togglePlay;
+  $('btnAccAll').onclick = applyAccToAll;
+  for (const b of document.querySelectorAll('#modeSeg button')) b.onclick = () => setMode(b.dataset.mode);
   $('tglContext').onclick = () => setContext(!state.contextOn);
   $('tglPad').onclick = () => setPad(!state.padOn);
   $('tglPad2').onclick = () => setPad(!state.padOn);
@@ -631,6 +756,7 @@ function init() {
   window.addEventListener('resize', () => {
     if (!$('viewShelf').classList.contains('hidden')) drawShelfRows();
   });
+  setMode('melody');
   renderDeck();
   requestAnimationFrame(frame);
 

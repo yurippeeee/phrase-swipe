@@ -18,6 +18,8 @@
   --roll-bar: #3a4050;
   --roll-beat: #232833;
   --playhead: #ffffff;
+  --acc: #f5b84a;
+  --acc-bass: #e0794f;
   --radius: 20px;
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-t: env(safe-area-inset-top, 0px);
@@ -47,6 +49,12 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 
 .view { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 16px; }
 
+/* メロディ／伴奏 切替 */
+.modeseg { display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 3px; margin-top: 4px; }
+.modeseg button { flex: 1; height: 36px; border-radius: 9px; font-weight: 700; color: var(--muted); }
+.modeseg button.on { background: var(--panel-2); color: var(--text); }
+.modeseg button[data-mode="acc"].on { color: var(--acc); }
+
 /* カード */
 .deck { position: relative; flex: 1; min-height: 220px; margin: 8px 0 12px; }
 .card {
@@ -65,6 +73,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .tag.pitch { color: #8fe3ff; }
 .tag.partial { color: #c9a6ff; }
 .tag.repeat, .tag.ending { color: var(--keep); }
+.tag.acc { color: var(--acc); }
 .card-head .ctx { font-size: 12px; }
 .card-head .num { margin-left: auto; }
 .card canvas { flex: 1; width: 100%; min-height: 0; border-radius: 12px; display: block; }
@@ -120,7 +129,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .shelf { list-style: none; margin: 0; padding: 0; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .shelf-empty { flex: 1; color: var(--muted); text-align: center; padding-top: 40px; line-height: 1.8; }
 .row {
-  display: grid; grid-template-columns: 40px 1fr 44px 44px; align-items: center; gap: 4px;
+  display: grid; grid-template-columns: 36px 1fr 40px 40px 40px; align-items: center; gap: 2px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
   padding: 6px; margin-bottom: 8px; position: relative;
 }
@@ -128,9 +137,10 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .row.dragging { z-index: 5; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5); opacity: 0.95; }
 .row .handle { height: 68px; font-size: 22px; color: var(--muted); touch-action: none; }
 .row canvas { width: 100%; height: 68px; border-radius: 8px; display: block; }
-.row .del, .row .dup { height: 68px; font-size: 18px; color: var(--muted); }
+.row .del, .row .dup, .row .accbtn { height: 68px; font-size: 18px; color: var(--muted); }
+.row .accbtn { color: var(--acc); font-size: 20px; }
 .row .dup { color: var(--chord); font-size: 20px; }
-.row .idx { position: absolute; left: 48px; bottom: 8px; font-size: 10px; color: var(--muted); pointer-events: none; }
+.row .idx { position: absolute; left: 44px; bottom: 8px; font-size: 10px; color: var(--muted); pointer-events: none; }
 .shelf-actions { display: flex; gap: 8px; justify-content: center; padding: 10px 0; flex-wrap: wrap; }
 .wide { width: 100%; height: 64px; border-radius: 20px; font-size: 18px; font-weight: 800; margin-bottom: 12px; }
 .primary { background: var(--accent); color: #0b0d12; }
@@ -164,8 +174,17 @@ input[type="text"] {
   background: var(--bg); color: var(--text); border: 1px solid var(--line); font-size: 18px; font-weight: 700;
   -webkit-user-select: text; user-select: text;
 }
-.presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-.presets button { padding: 8px 10px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); font-size: 13px; color: var(--text); }
+.seg.starts button { flex: 0 0 calc((100% - 30px) / 6); height: 54px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2; }
+.seg.starts small { font-size: 11px; font-weight: 600; opacity: 0.75; }
+.prog-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.prog-list button {
+  display: flex; align-items: baseline; gap: 10px; min-height: 48px; padding: 8px 14px; border-radius: 12px; text-align: left;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+}
+.prog-list button b { font-size: 15px; min-width: 112px; }
+.prog-list button span { color: var(--chord); font-size: 13px; }
+.prog-list button em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--muted); }
+.prog-list button.on { border-color: var(--accent); background: rgba(124, 140, 255, 0.18); }
 .prog-preview { margin-top: 8px; color: var(--chord); font-size: 13px; min-height: 18px; }
 .prog-preview.err { color: var(--nope); }
 

@@ -18,6 +18,10 @@
 
     <!-- 選ぶ -->
     <main id="viewSwipe" class="view">
+      <div class="modeseg" id="modeSeg">
+        <button data-mode="melody" class="on">メロディ</button>
+        <button data-mode="acc">伴奏</button>
+      </div>
       <div class="deck" id="deck"></div>
       <div class="lastbar hidden" id="lastBar">
         <canvas id="lastRoll"></canvas>
@@ -28,6 +32,7 @@
       <div class="toggles">
         <button class="chip" id="tglContext" aria-pressed="false">文脈試聴</button>
         <button class="chip" id="tglPad" aria-pressed="false">伴奏</button>
+        <button class="chip hidden" id="btnAccAll">棚全体に適用</button>
         <button class="chip" id="btnPlayCard">一時停止</button>
       </div>
       <div class="actions">
@@ -83,9 +88,12 @@
           <button data-v="2">2小節</button>
         </div>
       </div>
-      <div class="field">コード進行（度数）
+      <div class="field">コード進行：先頭のコード
+        <div class="seg starts" id="progStart"></div>
+        <div class="prog-list" id="progList"></div>
+      </div>
+      <div class="field">カスタム（度数を - 区切りで。3コードや5コード以上も可）
         <input type="text" id="setProg" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="I-V-vi-IV">
-        <div class="presets" id="progPresets"></div>
         <div class="prog-preview" id="progPreview"></div>
       </div>
       <button class="wide primary" id="btnApply">適用して新しい候補を作る</button>

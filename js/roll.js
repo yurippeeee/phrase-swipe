@@ -2,7 +2,7 @@
 
 const BLACK = [1, 3, 6, 8, 10];
 
-const COLOR_VARS = ['roll-bg', 'roll-black', 'roll-fade', 'roll-bar', 'roll-beat', 'muted', 'chord', 'note', 'note-pass', 'playhead'];
+const COLOR_VARS = ['roll-bg', 'roll-black', 'roll-fade', 'roll-bar', 'roll-beat', 'muted', 'chord', 'note', 'note-pass', 'playhead', 'acc', 'acc-bass'];
 let palette = null;
 function colors() {
   if (!palette) {
@@ -13,7 +13,8 @@ function colors() {
   return palette;
 }
 
-// segments: [{ phrase, faded }] を左から並べて描画
+// segments: [{ phrase, faded, acc:[{p,s,d,inst}], accFocus }] を左から並べて描画
+// accFocus: 伴奏を主役に描く（メロディは薄く）
 // opts: { playStep, labels(コード名表示) }
 export function drawRoll(canvas, segments, opts = {}) {
   const dpr = window.devicePixelRatio || 1;
@@ -33,7 +34,7 @@ export function drawRoll(canvas, segments, opts = {}) {
   const totalSteps = segments.reduce((a, s) => a + s.phrase.bars * 16, 0);
   let lo = Infinity;
   let hi = -Infinity;
-  for (const s of segments) for (const n of s.phrase.notes) {
+  for (const s of segments) for (const n of [...s.phrase.notes, ...(s.acc || [])]) {
     lo = Math.min(lo, n.p);
     hi = Math.max(hi, n.p);
   }
@@ -89,6 +90,14 @@ export function drawRoll(canvas, segments, opts = {}) {
         g.fillText(c ? c.label : '', (x0 + b * 16) * stepW + 5, labelH / 2 + 1);
       }
     }
+    // 伴奏
+    for (const n of seg.acc || []) {
+      g.globalAlpha = seg.faded ? 0.3 : seg.accFocus ? 0.95 : 0.45;
+      g.fillStyle = n.inst === 'bass' ? C['acc-bass'] : C.acc;
+      roundRect(g, (x0 + n.s) * stepW + 1, y(n.p) + 0.5, Math.max(3, n.d * stepW - 2), Math.max(2, rowH - 1), Math.min(3, rowH / 2));
+      g.fill();
+    }
+    g.globalAlpha = 1;
     // ノート
     for (const n of ph.notes) {
       const chord = ph.chords[Math.floor(n.s / 16) % ph.chords.length];
@@ -97,7 +106,7 @@ export function drawRoll(canvas, segments, opts = {}) {
       const nw = Math.max(3, n.d * stepW - 2);
       const ny = y(n.p) + 0.5;
       const nh = Math.max(3, rowH - 1);
-      g.globalAlpha = seg.faded ? 0.35 : 1;
+      g.globalAlpha = seg.faded ? 0.35 : seg.accFocus ? 0.5 : 1;
       g.fillStyle = ct ? C.note : C['note-pass'];
       roundRect(g, nx, ny, nw, nh, Math.min(4, nh / 2));
       g.fill();

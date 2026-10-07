@@ -41,21 +41,20 @@ function noteEvents(notes, ch, vel) {
   return out;
 }
 
-// song: { bpm, melody:[{p,s,d}], chords:[{s,d,notes:[]}] }（s,d は16分ステップ）
+// song: { bpm, tracks:[{ name, program, notes:[{p,s,d}], vel }] }（s,d は16分ステップ、トラック順にチャンネル0,1,2…）
 export function buildMidi(song) {
   const tempo = Math.round(60000000 / song.bpm);
   const conductor = track('Phrase Swipe', [
     { t: 0, order: 0, data: [0xff, 0x51, 0x03, (tempo >> 16) & 255, (tempo >> 8) & 255, tempo & 255] },
     { t: 0, order: 0, data: [0xff, 0x58, 0x04, 4, 2, 24, 8] },
   ]);
-  const mel = song.melody.map((n) => ({ p: n.p, t: n.s * TICKS_PER_STEP, len: Math.max(1, n.d * TICKS_PER_STEP - 10) }));
-  const melody = track('Melody', [{ t: 0, order: 0, data: [0xc0, 0] }, ...noteEvents(mel, 0, 96)]);
-  const ch = [];
-  for (const c of song.chords) for (const p of c.notes) ch.push({ p, t: c.s * TICKS_PER_STEP, len: c.d * TICKS_PER_STEP - 10 });
-  const chords = track('Chords', [{ t: 0, order: 0, data: [0xc1, 89] }, ...noteEvents(ch, 1, 64)]);
-
-  const header = [...str('MThd'), ...u32(6), 0, 1, 0, 3, (PPQ >> 8) & 255, PPQ & 255];
-  return new Uint8Array([...header, ...conductor, ...melody, ...chords]);
+  const tracks = song.tracks.map((tr, ch) => {
+    const ns = tr.notes.map((n) => ({ p: n.p, t: n.s * TICKS_PER_STEP, len: Math.max(1, n.d * TICKS_PER_STEP - 10) }));
+    return track(tr.name, [{ t: 0, order: 0, data: [0xc0 | ch, tr.program] }, ...noteEvents(ns, ch, tr.vel ?? 90)]);
+  });
+  const n = tracks.length + 1;
+  const header = [...str('MThd'), ...u32(6), 0, 1, (n >> 8) & 255, n & 255, (PPQ >> 8) & 255, PPQ & 255];
+  return new Uint8Array([...header, ...conductor, ...tracks.flat()]);
 }
 
 export function downloadMidi(bytes, filename) {

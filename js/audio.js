@@ -3,7 +3,7 @@
 
 const TICKS_PER_STEP = 48; // PPQ 192 / 4 (16分音符)
 
-let lead, pad, transport, part;
+let lead, pad, keys, bass, transport, part;
 let loopTicks = 0;
 let playing = false;
 let playGen = 0;
@@ -41,13 +41,24 @@ function setup() {
     envelope: { attack: 0.25, decay: 0.4, sustain: 0.75, release: 0.9 },
   }).connect(filter);
   pad.volume.value = -22;
+  keys = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'fattriangle', count: 2, spread: 12 },
+    envelope: { attack: 0.004, decay: 0.5, sustain: 0.25, release: 0.5 },
+  }).connect(reverb);
+  keys.volume.value = -17;
+  const bassFilter = new Tone.Filter({ type: 'lowpass', frequency: 700 }).toDestination();
+  bass = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.01, decay: 0.3, sustain: 0.6, release: 0.3 },
+  }).connect(bassFilter);
+  bass.volume.value = -10;
 }
 
 export function setBpm(bpm) {
   if (transport) transport.bpm.value = bpm;
 }
 
-// seq: { steps, notes:[{p,s,d}], chords:[{s,d,notes:[]}], loop, onEnd }
+// seq: { steps, notes:[{p,s,d}], acc:[{p,s,d,inst}], loop, onEnd }
 export function play(seq, bpm) {
   if (!unlocked) return;
   stop();
@@ -55,13 +66,24 @@ export function play(seq, bpm) {
   transport.bpm.value = bpm;
   const events = [];
   for (const n of seq.notes) events.push({ time: `${n.s * TICKS_PER_STEP}i`, kind: 'n', p: n.p, d: n.d, v: n.v ?? 0.8 });
-  for (const c of seq.chords || []) events.push({ time: `${c.s * TICKS_PER_STEP}i`, kind: 'c', notes: c.notes, d: c.d });
+  // 伴奏は同じタイミング・長さ・楽器の音をまとめて1イベントに
+  const groups = new Map();
+  for (const a of seq.acc || []) {
+    const k = `${a.s}.${a.d}.${a.inst}`;
+    if (!groups.has(k)) groups.set(k, { time: `${a.s * TICKS_PER_STEP}i`, kind: a.inst, notes: [], d: a.d });
+    groups.get(k).notes.push(a.p);
+  }
+  events.push(...groups.values());
 
   loopTicks = seq.steps * TICKS_PER_STEP;
   part = new Tone.Part((time, ev) => {
     const dur = `${Math.max(1, ev.d * TICKS_PER_STEP - 6)}i`;
-    if (ev.kind === 'n') lead.triggerAttackRelease(Tone.Frequency(ev.p, 'midi').toFrequency(), dur, time, ev.v);
-    else pad.triggerAttackRelease(ev.notes.map((m) => Tone.Frequency(m, 'midi').toFrequency()), dur, time, 0.5);
+    if (ev.kind === 'n') {
+      lead.triggerAttackRelease(Tone.Frequency(ev.p, 'midi').toFrequency(), dur, time, ev.v);
+      return;
+    }
+    const synth = ev.kind === 'pad' ? pad : ev.kind === 'bass' ? bass : keys;
+    synth.triggerAttackRelease(ev.notes.map((m) => Tone.Frequency(m, 'midi').toFrequency()), dur, time, 0.6);
   }, events);
   part.loop = !!seq.loop;
   part.loopEnd = `${loopTicks}i`;
@@ -88,8 +110,7 @@ export function stop() {
     part.dispose();
     part = null;
   }
-  lead.releaseAll();
-  pad.releaseAll();
+  for (const s of [lead, pad, keys, bass]) s.releaseAll();
   playing = false;
 }
 
