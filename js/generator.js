@@ -145,7 +145,7 @@ export function assignPitches(rhythm, ctx, opts = {}) {
         if (dir === -Math.sign(prevInterval) && steps <= 2) w *= 3;
         else if (dir === Math.sign(prevInterval)) w *= 0.25;
       }
-      if (c === prev && repeat >= 1) w *= 0.25;
+      if (c === prev) w *= repeat >= 1 ? 0.04 : 0.35;
       w *= Math.exp(-Math.abs(c - target) / (opts.target ? 2 : 5));
       if (last) {
         const deg = (((c - chord.rootPc) % 12) + 12) % 12;

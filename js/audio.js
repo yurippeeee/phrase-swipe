@@ -3,9 +3,10 @@
 
 const TICKS_PER_STEP = 48; // PPQ 192 / 4 (16分音符)
 
-let lead, pad, transport, part, endId;
+let lead, pad, transport, part;
 let loopTicks = 0;
 let playing = false;
+let playGen = 0;
 let unlocked = false;
 
 export function isUnlocked() {
@@ -50,6 +51,7 @@ export function setBpm(bpm) {
 export function play(seq, bpm) {
   if (!unlocked) return;
   stop();
+  const gen = ++playGen;
   transport.bpm.value = bpm;
   const events = [];
   for (const n of seq.notes) events.push({ time: `${n.s * TICKS_PER_STEP}i`, kind: 'n', p: n.p, d: n.d, v: n.v ?? 0.8 });
@@ -65,11 +67,12 @@ export function play(seq, bpm) {
   part.loopEnd = `${loopTicks}i`;
   part.start(0);
   if (!seq.loop) {
-    endId = transport.scheduleOnce(() => {
+    transport.scheduleOnce((time) => {
       Tone.getDraw().schedule(() => {
+        if (gen !== playGen) return;
         stop();
-        seq.onEnd && seq.onEnd();
-      }, Tone.now());
+        if (seq.onEnd) seq.onEnd();
+      }, time);
     }, `${loopTicks + TICKS_PER_STEP * 2}i`);
   }
   transport.position = 0;
@@ -85,7 +88,6 @@ export function stop() {
     part.dispose();
     part = null;
   }
-  endId = null;
   lead.releaseAll();
   pad.releaseAll();
   playing = false;
@@ -101,10 +103,4 @@ export function currentStep() {
   const t = transport.ticks;
   const pos = loopTicks && part && part.loop ? t % loopTicks : t;
   return pos / TICKS_PER_STEP;
-}
-
-// 単発で音を鳴らす（UIの手応え用）
-export function blip(midi) {
-  if (!unlocked) return;
-  lead.triggerAttackRelease(Tone.Frequency(midi, 'midi').toFrequency(), 0.08, undefined, 0.4);
 }

@@ -1,9 +1,11 @@
-import { KEY_NAMES, parseProgression } from './theory.js';
-import { generatePhrase } from './generator.js';
+import { KEY_NAMES, parseProgression, voiceChord } from './theory.js';
+import { generatePhrase, makeVariants, originLabel, STEPS_PER_BAR } from './generator.js';
 import * as audio from './audio.js';
 import { drawRoll } from './roll.js';
+import { buildMidi, downloadMidi } from './midi.js';
 
 const $ = (id) => document.getElementById(id);
+const STORE_KEY = 'phraseSwipe.v1';
 
 const PRESETS = ['I-V-vi-IV', 'I-vi-IV-V', 'vi-IV-I-V', 'ii-V-I-vi', 'I-IV-V-IV', 'i-VI-III-VII', 'i-iv-v-i', 'i-VII-VI-VII'];
 
@@ -11,8 +13,35 @@ const state = {
   settings: { key: 0, scale: 'major', bpm: 100, prog: 'I-V-vi-IV', bars: 2 },
   deck: [],
   shelf: [],
+  contextOn: false,
+  padOn: true,
   cardPlaying: true,
+  judged: 0,
 };
+
+// ---------- 保存 ----------
+function save() {
+  try {
+    const { settings, shelf, contextOn, padOn, judged } = state;
+    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, shelf, contextOn, padOn, judged }));
+  } catch (e) {
+    /* 容量超過やプライベートモード */
+  }
+}
+
+function load() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+    if (!d) return;
+    Object.assign(state.settings, d.settings || {});
+    state.shelf = Array.isArray(d.shelf) ? d.shelf : [];
+    state.contextOn = !!d.contextOn;
+    state.padOn = d.padOn !== false;
+    state.judged = d.judged || 0;
+  } catch (e) {
+    /* 壊れたデータは無視 */
+  }
+}
 
 // ---------- 候補の生成 ----------
 function progression() {
@@ -20,6 +49,8 @@ function progression() {
   const chords = parseProgression(s.prog, s.key, s.scale);
   return chords.length ? chords : parseProgression('I', s.key, s.scale);
 }
+
+const lastKept = () => state.shelf[state.shelf.length - 1];
 
 // 次に置く位置（棚の長さ）から、そのフレーズが担当するコードを決める
 function nextSlot() {
@@ -31,60 +62,101 @@ function nextSlot() {
   return { chords, bars };
 }
 
+const chordsKey = (chords) => chords.map((c) => c.label).join(' ');
+
 function newCandidate() {
   const s = state.settings;
   const { chords, bars } = nextSlot();
-  return generatePhrase({ key: s.key, scale: s.scale, chords, bars });
+  const last = lastKept();
+  const prevPitch = last && last.notes.length ? last.notes[last.notes.length - 1].p : undefined;
+  return generatePhrase({ key: s.key, scale: s.scale, chords, bars, prevPitch });
 }
 
 function fillDeck() {
   while (state.deck.length < 3) state.deck.push(newCandidate());
 }
 
+// ---------- 再生用シーケンス ----------
+function buildSeq(phrases, withPad) {
+  const notes = [];
+  const chords = [];
+  const ranges = [];
+  let off = 0;
+  for (const ph of phrases) {
+    for (const n of ph.notes) notes.push({ p: n.p, s: n.s + off, d: n.d });
+    for (let b = 0; b < ph.bars; b++) {
+      const c = ph.chords[b % ph.chords.length];
+      if (c) chords.push({ s: off + b * STEPS_PER_BAR, d: STEPS_PER_BAR, notes: voiceChord(c) });
+    }
+    ranges.push([off, off + ph.bars * STEPS_PER_BAR]);
+    off += ph.bars * STEPS_PER_BAR;
+  }
+  return { steps: off, notes, chords: withPad ? chords : [], allChords: chords, ranges };
+}
+
 // ---------- カード ----------
 const deckEl = $('deck');
-let cardCount = 0;
 
 function cardEl(phrase, behind) {
   const el = document.createElement('div');
   el.className = 'card' + (behind ? ' behind' : '');
   el.innerHTML = `
-    <div class="card-head"><span class="tag">新規</span><span class="num"></span></div>
+    <div class="card-head"><span class="tag"></span><span class="ctx"></span><span class="num"></span></div>
     <canvas></canvas>
     <div class="card-foot"><span>← ボツ</span><span>タップで再生/停止</span><span>キープ →</span></div>
     <div class="stamp keep">KEEP</div><div class="stamp nope">NOPE</div>`;
-  el.querySelector('.num').textContent = `#${cardCount + (behind ? 2 : 1)}`;
+  const tag = el.querySelector('.tag');
+  tag.textContent = originLabel(phrase.origin);
+  tag.classList.add(phrase.origin);
+  el.querySelector('.num').textContent = `#${state.judged + (behind ? 2 : 1)}`;
   el._phrase = phrase;
   return el;
+}
+
+function cardSegments(phrase) {
+  const last = lastKept();
+  return state.contextOn && last ? [{ phrase: last, faded: true }, { phrase }] : [{ phrase }];
+}
+
+function renderBack() {
+  fillDeck();
+  const old = deckEl.querySelector('.card.behind');
+  const back = cardEl(state.deck[1], true);
+  if (old) old.replaceWith(back);
+  else deckEl.prepend(back);
+  drawRoll(back.querySelector('canvas'), [{ phrase: state.deck[1] }]);
 }
 
 function renderDeck() {
   fillDeck();
   deckEl.innerHTML = '';
-  const back = cardEl(state.deck[1], true);
   const top = cardEl(state.deck[0], false);
-  deckEl.append(back, top);
-  drawRoll(back.querySelector('canvas'), [{ phrase: state.deck[1] }]);
+  deckEl.append(top);
+  renderBack();
+  updateCtxLabel();
   bindSwipe(top);
   playCurrent();
+}
+
+function updateCtxLabel() {
+  const top = topCard();
+  if (!top) return;
+  top.querySelector('.ctx').textContent = state.contextOn ? (lastKept() ? '◀ 直前のキープから' : '（棚が空）') : '';
 }
 
 function topCard() {
   return deckEl.querySelector('.card:not(.behind)');
 }
 
-function currentSegments(el) {
-  return [{ phrase: el._phrase }];
-}
-
 function playCurrent() {
   const ph = state.deck[0];
-  if (!ph || !audio.isUnlocked()) return;
+  if (!ph || !audio.isUnlocked() || $('viewSwipe').classList.contains('hidden')) return;
   if (!state.cardPlaying) {
     audio.stop();
     return;
   }
-  audio.play({ steps: ph.bars * 16, notes: ph.notes, loop: true }, state.settings.bpm);
+  const seq = buildSeq(cardSegments(ph).map((s) => s.phrase), state.padOn);
+  audio.play({ ...seq, loop: true }, state.settings.bpm);
 }
 
 // ---------- スワイプ ----------
@@ -141,51 +213,191 @@ function decide(kind) {
   const ph = state.deck.shift();
   if (kind === 'keep') {
     state.shelf.push(ph);
-    // 位置（担当コード）が変わるので、残りの候補を作り直す
-    state.deck = [];
-    toast('キープしました');
+    // 担当コードが変わるので、合わなくなった候補は作り直す
+    const slot = chordsKey(nextSlot().chords);
+    state.deck = state.deck.filter((p) => chordsKey(p.chords) === slot);
+    toast(`キープ（${state.shelf.length}）`);
   }
   const dir = kind === 'keep' ? 1 : -1;
   el.classList.add('fly');
   el.style.transform = `translate(${dir * window.innerWidth * 1.2}px, 40px) rotate(${dir * 24}deg)`;
   el.querySelector(`.stamp.${kind}`).style.opacity = 1;
-  cardCount++;
+  state.judged++;
   updateCounts();
+  save();
   setTimeout(() => {
     deciding = false;
     renderDeck();
   }, 200);
 }
 
+function similar() {
+  const ph = state.deck[0];
+  if (!ph || deciding) return;
+  const vars = makeVariants(ph, 5);
+  state.deck.splice(1, 0, ...vars);
+  renderBack();
+  toast(`近い候補を${vars.length}つ追加`);
+}
+
 function togglePlay() {
   state.cardPlaying = !state.cardPlaying;
-  $('btnPlayCard').textContent = state.cardPlaying ? '⏸' : '▶';
+  $('btnPlayCard').textContent = state.cardPlaying ? '一時停止' : '▶ 再生';
   playCurrent();
 }
 
+function setContext(on) {
+  state.contextOn = on;
+  $('tglContext').setAttribute('aria-pressed', String(on));
+  updateCtxLabel();
+  save();
+  playCurrent();
+}
+
+function setPad(on) {
+  state.padOn = on;
+  $('tglPad').setAttribute('aria-pressed', String(on));
+  $('tglPad2').setAttribute('aria-pressed', String(on));
+  save();
+  if (!$('viewSwipe').classList.contains('hidden')) playCurrent();
+  else if (songPlaying) playSong();
+}
+
 // ---------- 棚 ----------
+let songPlaying = false;
+let songRanges = null; // 再生中の各行の [開始, 終了] ステップ
+let songRows = null; // 再生中の行インデックス
+
 function updateCounts() {
   $('shelfCount').textContent = state.shelf.length;
 }
 
 function renderShelf() {
+  stopSong();
   const ul = $('shelf');
   ul.innerHTML = '';
   $('shelfEmpty').classList.toggle('hidden', state.shelf.length > 0);
+  $('btnPlaySong').disabled = !state.shelf.length;
   const bars = state.shelf.reduce((a, p) => a + p.bars, 0);
-  $('shelfSummary').textContent = `${state.shelf.length}フレーズ / ${bars}小節`;
+  const sec = Math.round((bars * 4 * 60) / state.settings.bpm);
+  $('shelfSummary').textContent = `${state.shelf.length}フレーズ / ${bars}小節 / 約${sec}秒`;
   state.shelf.forEach((ph, i) => {
     const li = document.createElement('li');
     li.className = 'row';
-    li.innerHTML = `<button class="handle">≡</button><canvas></canvas><button class="del" aria-label="削除">✕</button><span class="idx">${i + 1}</span>`;
+    li.innerHTML = `<button class="handle" aria-label="並べ替え">≡</button><canvas></canvas><button class="del" aria-label="削除">✕</button><span class="idx">${i + 1}</span>`;
     li.querySelector('.del').onclick = () => {
       state.shelf.splice(i, 1);
       updateCounts();
+      save();
       renderShelf();
     };
+    li.querySelector('canvas').onclick = () => playRow(i);
+    bindDrag(li, i);
     ul.append(li);
-    drawRoll(li.querySelector('canvas'), [{ phrase: ph }], { labels: true });
   });
+  drawShelfRows();
+}
+
+function drawShelfRows(playStep = -1) {
+  const rows = $('shelf').children;
+  for (let i = 0; i < rows.length; i++) {
+    let step = -1;
+    if (songRanges && songRows) {
+      const k = songRows.indexOf(i);
+      const r = songRanges[k];
+      if (r && playStep >= r[0] && playStep < r[1]) step = playStep - r[0];
+    }
+    rows[i].classList.toggle('playing', step >= 0);
+    drawRoll(rows[i].querySelector('canvas'), [{ phrase: state.shelf[i] }], { playStep: step });
+  }
+}
+
+function playPhrases(indices) {
+  if (!audio.isUnlocked() || !indices.length) return;
+  const seq = buildSeq(indices.map((i) => state.shelf[i]), state.padOn);
+  songRanges = seq.ranges;
+  songRows = indices;
+  songPlaying = true;
+  $('btnPlaySong').textContent = '■ 停止';
+  audio.play({ ...seq, loop: false, onEnd: stopSong }, state.settings.bpm);
+}
+
+function playSong() {
+  playPhrases(state.shelf.map((_, i) => i));
+}
+
+function playRow(i) {
+  playPhrases([i]);
+}
+
+function stopSong() {
+  if (songPlaying) audio.stop();
+  songPlaying = false;
+  songRanges = null;
+  songRows = null;
+  $('btnPlaySong').textContent = '▶ 通し再生';
+  drawShelfRows();
+}
+
+// ドラッグで並べ替え（タッチ対応のため Pointer Events で自前実装）
+function bindDrag(li, index) {
+  const handle = li.querySelector('.handle');
+  const ul = $('shelf');
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    stopSong();
+    handle.setPointerCapture(e.pointerId);
+    const rows = [...ul.children];
+    const rowH = li.getBoundingClientRect().height + 8;
+    const startY = e.clientY;
+    const startScroll = ul.scrollTop;
+    let target = index;
+    li.classList.add('dragging');
+    for (const r of rows) if (r !== li) r.style.transition = 'transform 0.15s';
+
+    const move = (ev) => {
+      const rect = ul.getBoundingClientRect();
+      if (ev.clientY < rect.top + 40) ul.scrollTop -= 8;
+      else if (ev.clientY > rect.bottom - 40) ul.scrollTop += 8;
+      const dy = ev.clientY - startY + (ul.scrollTop - startScroll);
+      li.style.transform = `translateY(${dy}px)`;
+      target = Math.max(0, Math.min(rows.length - 1, index + Math.round(dy / rowH)));
+      rows.forEach((r, j) => {
+        if (r === li) return;
+        let shift = 0;
+        if (index < target && j > index && j <= target) shift = -rowH;
+        if (index > target && j < index && j >= target) shift = rowH;
+        r.style.transform = shift ? `translateY(${shift}px)` : '';
+      });
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      if (target !== index) {
+        const [ph] = state.shelf.splice(index, 1);
+        state.shelf.splice(target, 0, ph);
+        save();
+      }
+      renderShelf();
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  });
+}
+
+function exportMidi() {
+  if (!state.shelf.length) {
+    toast('棚が空です');
+    return;
+  }
+  const seq = buildSeq(state.shelf, true);
+  const bytes = buildMidi({ bpm: state.settings.bpm, melody: seq.notes, chords: seq.allChords });
+  const d = new Date();
+  const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
+  downloadMidi(bytes, `phrase-swipe-${stamp}.mid`);
+  toast('MIDIを書き出しました');
 }
 
 // ---------- 設定 ----------
@@ -221,7 +433,9 @@ function refreshForm() {
   const pv = $('progPreview');
   pv.classList.toggle('err', !chords.length);
   pv.textContent = chords.length ? chords.map((c) => c.label).join(' → ') : '度数を読み取れません（例: I-V-vi-IV）';
-  $('progPresets').innerHTML = '';
+}
+
+function bindSettings() {
   for (const p of PRESETS) {
     const b = document.createElement('button');
     b.textContent = p;
@@ -233,9 +447,6 @@ function refreshForm() {
     };
     $('progPresets').append(b);
   }
-}
-
-function bindSettings() {
   $('setKey').addEventListener('click', (e) => {
     if (e.target.dataset.v == null) return;
     draft.key = +e.target.dataset.v;
@@ -261,11 +472,14 @@ function bindSettings() {
   });
   $('btnApply').onclick = () => {
     if (!parseProgression(draft.prog, draft.key, draft.scale).length) return;
+    const regen = ['key', 'scale', 'prog', 'bars'].some((k) => draft[k] !== state.settings[k]);
     state.settings = { ...draft };
-    state.deck = [];
+    if (regen) state.deck = [];
+    save();
     updateInfo();
     openSheet(false);
-    renderDeck();
+    if (!$('viewSwipe').classList.contains('hidden')) renderDeck();
+    else renderShelf();
   };
   $('btnSettings').onclick = () => openSheet(true);
   $('sheetBackdrop').onclick = () => openSheet(false);
@@ -295,30 +509,58 @@ function showView(id) {
   for (const t of document.querySelectorAll('.tab[data-view]')) t.classList.toggle('active', t.dataset.view === id);
   $('viewSwipe').classList.toggle('hidden', id !== 'viewSwipe');
   $('viewShelf').classList.toggle('hidden', id !== 'viewShelf');
-  if (id === 'viewSwipe') renderDeck();
-  else {
-    audio.stop();
+  audio.stop();
+  if (id === 'viewSwipe') {
+    stopSong();
+    // 棚の編集で担当コードが変わっていたら候補を入れ替える
+    const slot = chordsKey(nextSlot().chords);
+    state.deck = state.deck.filter((p) => chordsKey(p.chords) === slot);
+    renderDeck();
+  } else {
     renderShelf();
   }
 }
 
 // 再生位置のアニメーション
 function frame() {
-  const top = topCard();
-  if (top && !$('viewSwipe').classList.contains('hidden')) {
-    drawRoll(top.querySelector('canvas'), currentSegments(top), { playStep: deciding ? -1 : audio.currentStep() });
+  if (!$('viewSwipe').classList.contains('hidden')) {
+    const top = topCard();
+    if (top) drawRoll(top.querySelector('canvas'), cardSegments(top._phrase), { playStep: deciding ? -1 : audio.currentStep() });
+  } else if (songPlaying) {
+    drawShelfRows(audio.currentStep());
   }
   requestAnimationFrame(frame);
 }
 
 function init() {
+  load();
   updateInfo();
   updateCounts();
   bindSettings();
+  $('tglContext').setAttribute('aria-pressed', String(state.contextOn));
+  $('tglPad').setAttribute('aria-pressed', String(state.padOn));
+  $('tglPad2').setAttribute('aria-pressed', String(state.padOn));
   for (const t of document.querySelectorAll('.tab[data-view]')) t.onclick = () => showView(t.dataset.view);
   $('btnKeep').onclick = () => decide('keep');
   $('btnNope').onclick = () => decide('nope');
+  $('btnSimilar').onclick = similar;
   $('btnPlayCard').onclick = togglePlay;
+  $('tglContext').onclick = () => setContext(!state.contextOn);
+  $('tglPad').onclick = () => setPad(!state.padOn);
+  $('tglPad2').onclick = () => setPad(!state.padOn);
+  $('btnPlaySong').onclick = () => (songPlaying ? stopSong() : playSong());
+  $('btnMidi').onclick = exportMidi;
+  $('btnClear').onclick = () => {
+    if (!state.shelf.length || !confirm('キープ棚を全部消しますか？')) return;
+    state.shelf = [];
+    state.deck = [];
+    updateCounts();
+    save();
+    renderShelf();
+  };
+  window.addEventListener('resize', () => {
+    if (!$('viewShelf').classList.contains('hidden')) drawShelfRows();
+  });
   renderDeck();
   requestAnimationFrame(frame);
 
