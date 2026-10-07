@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0f1115">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Phrase Swipe</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <div class="brand">Phrase Swipe</div>
+      <div class="info" id="info"></div>
+    </header>
+
+    <!-- 選ぶ -->
+    <main id="viewSwipe" class="view">
+      <div class="deck" id="deck"></div>
+      <div class="toggles">
+        <button class="chip" id="tglContext" aria-pressed="false">文脈試聴</button>
+        <button class="chip" id="tglPad" aria-pressed="false">伴奏</button>
+        <button class="chip" id="btnPlayCard">⏸</button>
+      </div>
+      <div class="actions">
+        <button class="act nope" id="btnNope" aria-label="ボツ">✕</button>
+        <button class="act similar" id="btnSimilar">これに<br>近いの</button>
+        <button class="act keep" id="btnKeep" aria-label="キープ">♥</button>
+      </div>
+    </main>
+
+    <!-- キープ棚 -->
+    <main id="viewShelf" class="view hidden">
+      <div class="shelf-head">
+        <span id="shelfSummary"></span>
+        <span class="hint">≡ をドラッグで並べ替え</span>
+      </div>
+      <ul class="shelf" id="shelf"></ul>
+      <div class="shelf-empty" id="shelfEmpty">まだキープしたフレーズがありません。<br>「選ぶ」で右スワイプしてください。</div>
+      <div class="shelf-actions">
+        <button class="chip" id="tglPad2" aria-pressed="false">伴奏</button>
+        <button class="chip" id="btnMidi">MIDI書き出し</button>
+        <button class="chip danger" id="btnClear">全消去</button>
+      </div>
+      <button class="wide primary" id="btnPlaySong">▶ 通し再生</button>
+    </main>
+
+    <nav class="tabs">
+      <button class="tab active" data-view="viewSwipe">選ぶ</button>
+      <button class="tab" data-view="viewShelf">棚 <span class="badge" id="shelfCount">0</span></button>
+      <button class="tab" id="btnSettings">設定</button>
+    </nav>
+
+    <!-- 設定シート -->
+    <div class="sheet-backdrop hidden" id="sheetBackdrop"></div>
+    <section class="sheet" id="sheet" aria-hidden="true">
+      <div class="sheet-grip"></div>
+      <h2>設定</h2>
+      <div class="field">キー
+        <div class="seg keys" id="setKey"></div>
+      </div>
+      <div class="field">スケール
+        <div class="seg" id="setScale">
+          <button data-v="major">メジャー</button>
+          <button data-v="minor">マイナー</button>
+        </div>
+      </div>
+      <div class="field">BPM <output id="bpmOut"></output>
+        <input type="range" id="setBpm" min="60" max="180" step="1">
+      </div>
+      <div class="field">フレーズの長さ
+        <div class="seg" id="setBars">
+          <button data-v="1">1小節</button>
+          <button data-v="2">2小節</button>
+        </div>
+      </div>
+      <div class="field">コード進行（度数）
+        <input type="text" id="setProg" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="I-V-vi-IV">
+        <div class="presets" id="progPresets"></div>
+        <div class="prog-preview" id="progPreview"></div>
+      </div>
+      <button class="wide primary" id="btnApply">適用して新しい候補を作る</button>
+    </section>
+
+    <div class="unlock" id="unlock">
+      <div class="unlock-inner">
+        <div class="logo">♪</div>
+        <div class="unlock-title">Phrase Swipe</div>
+        <div class="unlock-text">聞いて、選んで、繋げる。</div>
+        <div class="unlock-tap">タップしてはじめる</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/tone@15.1.22/build/Tone.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
