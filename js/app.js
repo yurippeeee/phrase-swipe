@@ -324,9 +324,9 @@ function updateCounts() {
 }
 
 function renderShelf() {
-  stopSong();
   const ul = $('shelf');
   ul.innerHTML = '';
+  stopSong();
   $('shelfEmpty').classList.toggle('hidden', state.shelf.length > 0);
   $('btnPlaySong').disabled = !state.shelf.length;
   const bars = state.shelf.reduce((a, p) => a + p.bars, 0);
@@ -335,25 +335,31 @@ function renderShelf() {
   state.shelf.forEach((ph, i) => {
     const li = document.createElement('li');
     li.className = 'row';
+    // 行はフレーズそのものを持ち、操作時に現在の位置を引き直す（古い番号で別のフレーズを触らない）
+    li._phrase = ph;
+    const at = () => state.shelf.indexOf(ph);
     li.innerHTML = `<button class="handle" aria-label="並べ替え">≡</button><canvas></canvas><button class="dup" aria-label="くり返し（複製）">⧉</button><button class="del" aria-label="削除">✕</button><span class="idx">${i + 1}</span>`;
     li.querySelector('.del').onclick = () => {
-      state.shelf.splice(i, 1);
+      if (at() < 0) return;
+      state.shelf.splice(at(), 1);
       updateCounts();
       save();
       renderShelf();
     };
     li.querySelector('.dup').onclick = () => {
-      state.shelf.splice(i + 1, 0, copyPhrase(ph));
+      const k = at();
+      if (k < 0) return;
+      state.shelf.splice(k + 1, 0, copyPhrase(ph));
       updateCounts();
       save();
       renderShelf();
-      toast(`${i + 1} をくり返しました`);
+      toast(`${k + 1} をくり返しました`);
     };
-    li.querySelector('canvas').onclick = () => playRow(i);
+    li.querySelector('canvas').onclick = () => at() >= 0 && playRow(at());
     // 小節数が分かるよう、短いフレーズは幅も短く
     const maxBars = Math.max(...state.shelf.map((p) => p.bars));
     li.querySelector('canvas').style.width = `${(ph.bars / maxBars) * 100}%`;
-    bindDrag(li, i);
+    bindDrag(li);
     ul.append(li);
   });
   drawShelfRows();
@@ -369,7 +375,7 @@ function drawShelfRows(playStep = -1) {
       if (r && playStep >= r[0] && playStep < r[1]) step = playStep - r[0];
     }
     rows[i].classList.toggle('playing', step >= 0);
-    drawRoll(rows[i].querySelector('canvas'), [{ phrase: state.shelf[i] }], { playStep: step });
+    if (rows[i]._phrase) drawRoll(rows[i].querySelector('canvas'), [{ phrase: rows[i]._phrase }], { playStep: step });
   }
 }
 
@@ -401,11 +407,13 @@ function stopSong() {
 }
 
 // ドラッグで並べ替え（タッチ対応のため Pointer Events で自前実装）
-function bindDrag(li, index) {
+function bindDrag(li) {
   const handle = li.querySelector('.handle');
   const ul = $('shelf');
   handle.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    const index = state.shelf.indexOf(li._phrase);
+    if (index < 0) return;
     stopSong();
     handle.setPointerCapture(e.pointerId);
     const rows = [...ul.children];
