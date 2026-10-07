@@ -52,14 +52,17 @@ function chooseCell(cells, density) {
 
 function barRhythm(density, isLast) {
   const out = []; // [{s,d}]
+  // 同じリズムセルを全拍で繰り返す小節（刻み・オスティナート）
+  const ostinato = rand() < 0.35 ? chooseCell(BEAT_CELLS.filter((x) => x.c[0] > 0 && x.c.length > 1), density) : null;
   let s = 0;
   while (s < STEPS_PER_BAR) {
     let cell;
-    if (s % 8 === 0 && rand() < 0.3) cell = chooseCell(HALF_CELLS, density);
+    if (ostinato) cell = ostinato;
+    else if (s % 8 === 0 && rand() < 0.3) cell = chooseCell(HALF_CELLS, density);
     else cell = chooseCell(BEAT_CELLS, density);
     // フレーズ最後の拍は落ち着かせる
     if (isLast && s >= 12) cell = pick([[4], [4], [2, 2], [-2, 2], [2, -2]]);
-    if (isLast && s === 8 && rand() < 0.35) cell = pick([[8], [6, 2]]);
+    if (isLast && s === 8 && !ostinato && rand() < 0.35) cell = pick([[8], [6, 2]]);
     for (const v of cell) {
       if (v > 0) out.push({ s, d: v });
       s += Math.abs(v);
@@ -68,21 +71,21 @@ function barRhythm(density, isLast) {
   return out;
 }
 
+// copyOf: 1小節目のどの音のリズムを写したか（音程も写す手がかりになる）
 export function genRhythm(bars, density = 0.3 + rand() * 0.5) {
   const first = barRhythm(density, bars === 1);
   const all = first.map((n) => ({ ...n }));
   for (let b = 1; b < bars; b++) {
     const isLast = b === bars - 1;
-    let r;
-    if (rand() < 0.45) {
+    if (rand() < 0.55) {
       // 動機の反復（最後の拍だけ変える）
-      r = first.filter((n) => n.s < 12).map((n) => ({ ...n }));
-      const tail = barRhythm(density, isLast).filter((n) => n.s >= 12);
-      r = r.filter((n) => n.s + n.d <= 12).concat(tail);
+      first.forEach((n, k) => {
+        if (n.s + n.d <= 12) all.push({ s: n.s + b * STEPS_PER_BAR, d: n.d, copyOf: k });
+      });
+      for (const n of barRhythm(density, isLast)) if (n.s >= 12) all.push({ s: n.s + b * STEPS_PER_BAR, d: n.d });
     } else {
-      r = barRhythm(density, isLast);
+      for (const n of barRhythm(density, isLast)) all.push({ s: n.s + b * STEPS_PER_BAR, d: n.d });
     }
-    for (const n of r) all.push({ s: n.s + b * STEPS_PER_BAR, d: n.d });
   }
   if (all.length < 2) return genRhythm(bars, density + 0.2);
   return all;
@@ -106,8 +109,13 @@ function isChordTone(p, chord) {
   return chord.pcs.includes(((p % 12) + 12) % 12);
 }
 
+// 半小節ごとの音程パターン
+//  walk: 1音ずつ選ぶ / repeat: 同音連打 / alternate: 2音交互 / run: 音階を一方向に / echo: 前の半小節をなぞる
+const MODES = ['walk', 'repeat', 'alternate', 'run'];
+const MODE_W = { walk: 1, repeat: 0.45, alternate: 0.5, run: 0.4 };
+
 // rhythm に音程を割り当てる
-// opts.target: 各音の目標音高（派生用）, opts.prevPitch: 直前の音（文脈）
+// opts.target: 各音の目標音高（派生用。指定時はパターンを使わない）, opts.prevPitch: 直前の音（文脈）
 export function assignPitches(rhythm, ctx, opts = {}) {
   const { key, scale, chords, bars } = ctx;
   const { lo, hi } = rangeFor(key);
@@ -115,6 +123,9 @@ export function assignPitches(rhythm, ctx, opts = {}) {
   const center = (lo + hi) / 2;
   const contour = opts.contour || CONTOURS[pick(Object.keys(CONTOURS))];
   const total = bars * STEPS_PER_BAR;
+  const usePatterns = !opts.target;
+  // フレーズごとに得意なパターンを1つ決め、極端に繰り返すフレーズも出るようにする
+  const style = usePatterns ? weighted([...MODES, 'echo'], [1.2, 1, 1, 0.8, 1]) : 'walk';
 
   let prev = opts.prevPitch;
   if (prev == null || prev < lo - 5 || prev > hi + 5) prev = Math.round(center + (rand() - 0.5) * 6);
@@ -122,20 +133,26 @@ export function assignPitches(rhythm, ctx, opts = {}) {
   let repeat = 0;
   const out = [];
 
-  rhythm.forEach((n, i) => {
-    const chord = chords[Math.floor(n.s / STEPS_PER_BAR) % chords.length];
-    const strong = n.s % 8 === 0 || n.d >= 4;
-    const last = i === rhythm.length - 1;
-    const target = opts.target ? opts.target[i] : center + contour(n.s / total);
-    const prevIdx = nearestIndex(pool, prev);
+  const chordAt = (n) => chords[Math.floor(n.s / STEPS_PER_BAR) % chords.length];
+  const targetAt = (i) => (opts.target ? opts.target[i] : center + contour(rhythm[i].s / total));
+  // 強拍・長い音・最後の音はコードトーン
+  const needsCT = (i) => rhythm[i].s % 8 === 0 || rhythm[i].d >= 4 || i === rhythm.length - 1;
 
+  // 1音ずつ重み付きで選ぶ
+  const choose = (i) => {
+    const n = rhythm[i];
+    const chord = chordAt(n);
+    const strong = needsCT(i);
+    const last = i === rhythm.length - 1;
+    const target = targetAt(i);
+    const prevIdx = nearestIndex(pool, prev);
     const cands = pool.filter((c) => Math.abs(c - prev) <= 9);
     const weights = cands.map((c) => {
       const ct = isChordTone(c, chord);
-      if ((strong || last) && !ct) return 0; // 強拍・長い音・最後の音はコードトーン
+      if (strong && !ct) return 0;
       const steps = Math.abs(nearestIndex(pool, c) - prevIdx);
       const semis = Math.abs(c - prev);
-      let w = [0.5, 3, 1.6, 0.6, 0.35, 0.12, 0.08, 0.05][Math.min(steps, 7)];
+      let w = [0.8, 3, 1.6, 0.6, 0.35, 0.12, 0.08, 0.05][Math.min(steps, 7)];
       if (i === 0 && opts.prevPitch == null) w = 1;
       if (semis === 6) w *= 0.15;
       if (ct) w *= strong ? 1 : 1.3;
@@ -145,21 +162,122 @@ export function assignPitches(rhythm, ctx, opts = {}) {
         if (dir === -Math.sign(prevInterval) && steps <= 2) w *= 3;
         else if (dir === Math.sign(prevInterval)) w *= 0.25;
       }
-      if (c === prev) w *= repeat >= 1 ? 0.04 : 0.35;
+      if (c === prev && repeat >= 2) w *= 0.2;
       w *= Math.exp(-Math.abs(c - target) / (opts.target ? 2 : 5));
-      if (last) {
-        const deg = (((c - chord.rootPc) % 12) + 12) % 12;
-        if (deg === 0) w *= 2.5;
-      }
+      if (last && (((c - chord.rootPc) % 12) + 12) % 12 === 0) w *= 2.5;
       return w;
     });
-    let p = weighted(cands, weights);
-    if (p == null) p = prev;
+    const p = weighted(cands, weights);
+    return p == null ? prev : p;
+  };
+
+  // コードトーンが必要な位置なら最寄りのコードトーンへ寄せて確定
+  const place = (i, p) => {
+    p = Math.max(pool[0], Math.min(pool[pool.length - 1], p));
+    if (needsCT(i) && !isChordTone(p, chordAt(rhythm[i]))) {
+      const cts = pool.filter((c) => isChordTone(c, chordAt(rhythm[i])));
+      p = cts.reduce((a, c) => (Math.abs(c - p) < Math.abs(a - p) || (Math.abs(c - p) === Math.abs(a - p) && Math.abs(c - prev) < Math.abs(a - prev)) ? c : a), cts[0]);
+    }
     prevInterval = p - prev;
     repeat = p === prev ? repeat + 1 : 0;
     prev = p;
-    out.push({ p, s: n.s, d: n.d });
+    out[i] = { p, s: rhythm[i].s, d: rhythm[i].d };
+  };
+
+  // 元の音列を音階上でずらして写す（反復/ゼクエンツ）。強拍がコードトーンに乗るずらし幅を選ぶ
+  const copyPitches = (idxs, srcPitches) => {
+    let best = 0;
+    let bestScore = -Infinity;
+    for (let sh = -3; sh <= 3; sh++) {
+      let score = sh === 0 ? 0.6 : -Math.abs(sh) * 0.25;
+      idxs.forEach((i, k) => {
+        const ni = nearestIndex(pool, srcPitches[k]) + sh;
+        if (ni < 0 || ni >= pool.length) score -= 5;
+        else if (needsCT(i) && isChordTone(pool[ni], chordAt(rhythm[i]))) score += 1;
+      });
+      score += rand() * 0.3;
+      if (score > bestScore) {
+        bestScore = score;
+        best = sh;
+      }
+    }
+    idxs.forEach((i, k) => {
+      const ni = Math.max(0, Math.min(pool.length - 1, nearestIndex(pool, srcPitches[k]) + best));
+      place(i, pool[ni]);
+    });
+  };
+
+  // 半小節ごとにまとめる
+  const groups = [];
+  rhythm.forEach((n, i) => {
+    const g = Math.floor(n.s / 8);
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(i);
   });
+  const shape = (idxs) => idxs.map((i) => `${rhythm[i].s % 8}:${rhythm[i].d}`).join(',');
+  const done = []; // 確定済みの半小節 [{shape, pitches}]
+  let pairOffset = null; // 2音交互の相方（音階上の距離）
+
+  for (const idxs of groups) {
+    if (!idxs) continue;
+    // 1小節目のリズムを写した音は、音程も写す
+    const copied = usePatterns ? idxs.filter((i) => rhythm[i].copyOf != null && out[rhythm[i].copyOf]) : [];
+    if (copied.length && rand() < 0.75) {
+      copyPitches(copied, copied.map((i) => out[rhythm[i].copyOf].p));
+    }
+    const rest = idxs.filter((i) => !out[i]);
+    if (!rest.length) {
+      done.push({ shape: shape(idxs), pitches: idxs.map((i) => out[i].p) });
+      continue;
+    }
+
+    let mode = 'walk';
+    const echoSrc = done.filter((d) => d.shape === shape(rest));
+    if (usePatterns) {
+      const w = MODES.map((m) => MODE_W[m] * (m === style ? 4 : 1));
+      const modes = [...MODES];
+      if (echoSrc.length) {
+        modes.push('echo');
+        w.push(style === 'echo' ? 4 : 1);
+      }
+      mode = weighted(modes, w);
+      if (rest.length === 1 && mode !== 'echo') mode = 'walk';
+    }
+
+    if (mode === 'echo') {
+      copyPitches(rest, echoSrc[echoSrc.length - 1].pitches);
+    } else if (mode === 'repeat') {
+      place(rest[0], choose(rest[0]));
+      for (const i of rest.slice(1)) place(i, prev);
+    } else if (mode === 'alternate') {
+      place(rest[0], choose(rest[0]));
+      const a = prev;
+      if (pairOffset == null || style !== 'alternate') {
+        const up = targetAt(rest[0]) >= a;
+        pairOffset = weighted([1, 2, -1, -2, 3, -3], up ? [3, 2, 1.5, 1, 0.6, 0.3] : [1.5, 1, 3, 2, 0.3, 0.6]);
+      }
+      const ai = nearestIndex(pool, a);
+      let bi = ai + pairOffset;
+      if (bi < 0 || bi >= pool.length) bi = ai - pairOffset;
+      const b = pool[Math.max(0, Math.min(pool.length - 1, bi))];
+      rest.slice(1).forEach((i, k) => place(i, k % 2 === 0 ? b : a));
+    } else if (mode === 'run') {
+      place(rest[0], choose(rest[0]));
+      let dir = targetAt(rest[rest.length - 1]) >= prev ? 1 : -1;
+      if (rand() < 0.25) dir = -dir;
+      for (const i of rest.slice(1)) {
+        let ni = nearestIndex(pool, prev) + dir;
+        if (ni < 0 || ni >= pool.length) {
+          dir = -dir;
+          ni = nearestIndex(pool, prev) + dir;
+        }
+        place(i, pool[ni]);
+      }
+    } else {
+      for (const i of rest) place(i, choose(i));
+    }
+    done.push({ shape: shape(idxs), pitches: idxs.map((i) => out[i].p) });
+  }
   return out;
 }
 
@@ -277,7 +395,9 @@ function varyPartial(ph) {
   const total = ph.bars * STEPS_PER_BAR;
   const cut = total - 8;
   const head = ph.notes.filter((n) => n.s < cut).map((n) => ({ ...n, d: Math.min(n.d, cut - n.s) }));
-  const tailR = genRhythm(ph.bars).filter((n) => n.s >= cut);
+  const tailR = genRhythm(ph.bars)
+    .filter((n) => n.s >= cut)
+    .map(({ s, d }) => ({ s, d }));
   const prev = head.length ? head[head.length - 1].p : undefined;
   const tail = assignPitches(tailR, ctx, { prevPitch: prev });
   return head.concat(tail);
