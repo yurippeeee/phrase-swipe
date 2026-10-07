@@ -326,44 +326,32 @@ function makePhrase(ctx, notes, origin, parentId) {
     notes,
     origin,
     parentId: parentId || null,
+    pos: ctx.pos ?? null, // コード進行上の開始小節
   };
 }
 
 // ---------- くり返し ----------
-const chordsKey = (chords) => chords.map((c) => c.label).join(' ');
+// 全く同じフレーズをもう一度（コードも同じ）
+export function copyPhrase(ph) {
+  return { ...ph, id: newId(), origin: 'repeat', parentId: ph.id, motif: ph.motif || ph.id, notes: ph.notes.map((n) => ({ ...n })) };
+}
 
-// 決めたフレーズを次の位置のコードに合わせてもう一度使う。
-// コードが同じならそのまま、違えば音階上でずらして（ゼクエンツ）強拍をコードトーンに合わせる。
-// newEnding: 語尾（最後の半小節 / 1小節なら最後の拍）だけ作り直す
-export function repeatPhrase(ph, chords, { newEnding = false } = {}) {
-  const ctx = { ...ctxOf(ph), chords };
-  let notes = ph.notes.map((n) => ({ ...n }));
-  if (chordsKey(chords) !== chordsKey(ph.chords)) {
-    const { lo, hi } = rangeFor(ctx.key);
-    const pool = scalePitches(ctx.key, ctx.scale, lo - 3, hi + 3);
-    let best = 0;
-    let bestScore = -Infinity;
-    for (let sh = -3; sh <= 3; sh++) {
-      let score = sh === 0 ? 0.5 : -Math.abs(sh) * 0.2;
-      notes.forEach((n, i) => {
-        const ni = nearestIndex(pool, n.p) + sh;
-        const chord = chords[Math.floor(n.s / STEPS_PER_BAR) % chords.length];
-        if (ni < 0 || ni >= pool.length) score -= 5;
-        else if ((n.s % 8 === 0 || n.d >= 4 || i === notes.length - 1) && isChordTone(pool[ni], chord)) score += 1;
-      });
-      if (score > bestScore) {
-        bestScore = score;
-        best = sh;
-      }
+// 語尾だけ違うフレーズの候補（3回くり返して4回目で変える、など）
+export function endingVariants(ph, count = 5) {
+  const ctx = ctxOf(ph);
+  const seen = new Set([sig(ph.notes)]);
+  const out = [];
+  for (let tries = 0; out.length < count && tries < count * 8; tries++) {
+    const len = ph.bars === 1 ? pick([4, 4, 8]) : pick([4, 8, 8]);
+    const notes = regenTail(ph.notes, ctx, len).filter((n) => n.d > 0);
+    const k = sig(notes);
+    if (notes.length && !seen.has(k)) {
+      seen.add(k);
+      const v = makePhrase(ctx, notes, 'ending', ph.id);
+      v.motif = ph.motif || ph.id;
+      out.push(v);
     }
-    notes = snapStrong(
-      notes.map((n) => ({ ...n, p: pool[Math.max(0, Math.min(pool.length - 1, nearestIndex(pool, n.p) + best))] })),
-      ctx,
-    );
   }
-  if (newEnding) notes = regenTail(notes, ctx, ph.bars === 1 ? 4 : 8);
-  const out = makePhrase(ctx, notes, newEnding ? 'repeat2' : 'repeat', ph.id);
-  out.motif = ph.motif || ph.id;
   return out;
 }
 
@@ -379,11 +367,11 @@ function regenTail(notes, ctx, len) {
 }
 
 // ---------- 派生（これに近いの） ----------
-const ORIGIN_LABEL = { new: '新規', rhythm: 'リズム違い', pitch: '音程違い', partial: '一部変更', repeat: 'くり返し', repeat2: 'くり返し・語尾変え' };
+const ORIGIN_LABEL = { new: '新規', rhythm: 'リズム違い', pitch: '音程違い', partial: '一部変更', repeat: 'くり返し', ending: '語尾違い' };
 export const originLabel = (o) => ORIGIN_LABEL[o] || o;
 
 function ctxOf(phrase) {
-  return { key: phrase.key, scale: phrase.scale, chords: phrase.chords, bars: phrase.bars };
+  return { key: phrase.key, scale: phrase.scale, chords: phrase.chords, bars: phrase.bars, pos: phrase.pos };
 }
 
 function snapStrong(notes, ctx) {

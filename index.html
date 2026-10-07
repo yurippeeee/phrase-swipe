@@ -19,6 +19,12 @@
     <!-- 選ぶ -->
     <main id="viewSwipe" class="view">
       <div class="deck" id="deck"></div>
+      <div class="lastbar hidden" id="lastBar">
+        <canvas id="lastRoll"></canvas>
+        <div class="lastinfo">直前<b id="lastCount"></b></div>
+        <button class="chip" id="btnRepeat">くり返す</button>
+        <button class="chip" id="btnEnding">語尾違い</button>
+      </div>
       <div class="toggles">
         <button class="chip" id="tglContext" aria-pressed="false">文脈試聴</button>
         <button class="chip" id="tglPad" aria-pressed="false">伴奏</button>

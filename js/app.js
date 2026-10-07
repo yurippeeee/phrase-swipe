@@ -1,5 +1,5 @@
 import { KEY_NAMES, parseProgression, voiceChord } from './theory.js';
-import { generatePhrase, makeVariants, repeatPhrase, originLabel, newId, STEPS_PER_BAR } from './generator.js';
+import { generatePhrase, makeVariants, copyPhrase, endingVariants, originLabel, STEPS_PER_BAR } from './generator.js';
 import * as audio from './audio.js';
 import { drawRoll } from './roll.js';
 import { buildMidi, downloadMidi } from './midi.js';
@@ -55,46 +55,32 @@ function progression() {
 
 const lastKept = () => state.shelf[state.shelf.length - 1];
 
-// 次に置く位置（棚の長さ）から、そのフレーズが担当するコードを決める
+// 直前のフレーズの続き（コード進行上の位置）から、次のフレーズが担当するコードを決める。
+// くり返したフレーズはコードも同じなので、くり返しの後は元のフレーズの続きから進む
 function nextSlot(bars) {
   const prog = progression();
-  const bar = state.shelf.reduce((a, p) => a + p.bars, 0);
+  const last = lastKept();
+  const pos = !last ? 0 : last.pos != null ? last.pos + last.bars : state.shelf.reduce((a, p) => a + p.bars, 0);
   const chords = [];
-  for (let b = 0; b < bars; b++) chords.push(prog[(bar + b) % prog.length]);
-  return { chords, bars };
+  for (let b = 0; b < bars; b++) chords.push(prog[(pos + b) % prog.length]);
+  return { chords, bars, pos: pos % prog.length };
 }
 
 // 長さ「ランダム」は 1小節多め
 const pickBars = () => (state.settings.bars === 'random' ? (Math.random() < 0.6 ? 1 : 2) : state.settings.bars);
 
 const chordsKey = (chords) => chords.map((c) => c.label).join(' ');
-// 候補が今の位置のコードに合っているか
-const fitsSlot = (p) => chordsKey(p.chords) === chordsKey(nextSlot(p.bars).chords);
-
-// キープ直後の候補：決めたフレーズのくり返し（A A, A A'）と、1つ前のフレーズへの戻り（A B A）
-function repeatCandidates() {
-  const n = state.shelf.length;
-  const last = state.shelf[n - 1];
-  if (!last) return [];
-  const motif = (p) => p.motif || p.id;
-  // 同じフレーズが既に3回続いていたら勧めない
-  const run = state.shelf.slice(-3).filter((p) => motif(p) === motif(last)).length;
-  const out = [];
-  if (run < 3) {
-    out.push(repeatPhrase(last, nextSlot(last.bars).chords));
-    if (Math.random() < 0.6) out.push(repeatPhrase(last, nextSlot(last.bars).chords, { newEnding: true }));
-  }
-  const before = state.shelf[n - 2];
-  if (before && motif(before) !== motif(last)) out.push(repeatPhrase(before, nextSlot(before.bars).chords));
-  return out;
-}
+const motifOf = (p) => p.motif || p.id;
+// 候補が今の位置に置けるか（語尾違いは直前のフレーズと同じ位置の代わりなので、直前と同じ動機なら可）
+const fitsSlot = (p) =>
+  p.origin === 'ending' ? !!lastKept() && motifOf(lastKept()) === p.motif : chordsKey(p.chords) === chordsKey(nextSlot(p.bars).chords);
 
 function newCandidate() {
   const s = state.settings;
-  const { chords, bars } = nextSlot(pickBars());
+  const { chords, bars, pos } = nextSlot(pickBars());
   const last = lastKept();
   const prevPitch = last && last.notes.length ? last.notes[last.notes.length - 1].p : undefined;
-  return generatePhrase({ key: s.key, scale: s.scale, chords, bars, prevPitch });
+  return generatePhrase({ key: s.key, scale: s.scale, chords, bars, pos, prevPitch });
 }
 
 function fillDeck() {
@@ -159,6 +145,7 @@ function renderDeck() {
   deckEl.append(top);
   renderBack();
   updateCtxLabel();
+  updateLastBar();
   bindSwipe(top);
   playCurrent();
 }
@@ -238,10 +225,8 @@ function decide(kind) {
   const ph = state.deck.shift();
   if (kind === 'keep') {
     state.shelf.push(ph);
-    // 担当コードが変わるので、合わなくなった候補は作り直す。くり返し候補を先頭に
-    const reps = repeatCandidates();
-    const fresh = state.deck.filter((p) => fitsSlot(p) && p.origin !== 'repeat' && p.origin !== 'repeat2');
-    state.deck = [reps[0], fresh[0], ...reps.slice(1), ...fresh.slice(1)].filter(Boolean);
+    // 担当コードが変わるので、合わなくなった候補は作り直す（語尾違いを選んだら他の語尾違いは片付ける）
+    state.deck = state.deck.filter((p) => fitsSlot(p) && !(ph.origin === 'ending' && p.origin === 'ending'));
     toast(`キープ（${state.shelf.length}）`);
   }
   const dir = kind === 'keep' ? 1 : -1;
@@ -255,6 +240,46 @@ function decide(kind) {
     deciding = false;
     renderDeck();
   }, 200);
+}
+
+// ---------- 直前のキープ：くり返し ----------
+// 末尾で同じ動機が何回続いているか
+function runLength() {
+  const last = lastKept();
+  let n = 0;
+  for (let i = state.shelf.length - 1; i >= 0 && motifOf(state.shelf[i]) === motifOf(last); i--) n++;
+  return n;
+}
+
+function updateLastBar() {
+  const last = lastKept();
+  $('lastBar').classList.toggle('hidden', !last);
+  if (!last) return;
+  $('lastCount').textContent = `×${runLength()}`;
+  drawRoll($('lastRoll'), [{ phrase: last }], { labels: false });
+}
+
+// 全く同じフレーズを棚に足す
+function repeatLast() {
+  const last = lastKept();
+  if (!last) return;
+  state.shelf.push(copyPhrase(last));
+  state.deck = state.deck.filter(fitsSlot);
+  updateCounts();
+  updateLastBar();
+  save();
+  toast(`くり返し ×${runLength()}`);
+  if (!state.deck.length) renderDeck();
+}
+
+// 直前のフレーズの語尾だけ違う候補を先頭に並べる
+function endingsOfLast() {
+  const last = lastKept();
+  if (!last || deciding) return;
+  const vars = endingVariants(last, 5);
+  state.deck = [...vars, ...state.deck.filter((p) => p.origin !== 'ending')];
+  renderDeck();
+  toast(`語尾違いを${vars.length}つ用意`);
 }
 
 function similar() {
@@ -318,8 +343,7 @@ function renderShelf() {
       renderShelf();
     };
     li.querySelector('.dup').onclick = () => {
-      const copy = { ...ph, id: newId(), motif: ph.motif || ph.id, notes: ph.notes.map((n) => ({ ...n })) };
-      state.shelf.splice(i + 1, 0, copy);
+      state.shelf.splice(i + 1, 0, copyPhrase(ph));
       updateCounts();
       save();
       renderShelf();
@@ -580,6 +604,8 @@ function init() {
   $('btnKeep').onclick = () => decide('keep');
   $('btnNope').onclick = () => decide('nope');
   $('btnSimilar').onclick = similar;
+  $('btnRepeat').onclick = repeatLast;
+  $('btnEnding').onclick = endingsOfLast;
   $('btnPlayCard').onclick = togglePlay;
   $('tglContext').onclick = () => setContext(!state.contextOn);
   $('tglPad').onclick = () => setPad(!state.padOn);
