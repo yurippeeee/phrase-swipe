@@ -382,9 +382,24 @@ function snapStrong(notes, ctx) {
     const strong = n.s % 8 === 0 || n.d >= 4 || i === notes.length - 1;
     if (!strong || isChordTone(n.p, chord)) return n;
     const cts = pool.filter((c) => isChordTone(c, chord));
+    if (!cts.length) return n;
     const best = cts.reduce((a, c) => (Math.abs(c - n.p) < Math.abs(a - n.p) ? c : a), cts[0]);
     return { ...n, p: best };
   });
+}
+
+// 既存のフレーズに別のコード（とキー・スケール）を当てはめる。
+// メロディはキーの差だけ移調し、スケール外の音は最寄りのスケール音へ、強拍はコードトーンへ寄せる
+export function reharmonize(ph, { key, scale, chords, pos }) {
+  const ctx = { key, scale, chords, bars: ph.bars };
+  const shift = ((key - (ph.key ?? key) + 18) % 12) - 6;
+  const { lo, hi } = rangeFor(key);
+  const pool = scalePitches(key, scale, lo - 6, hi + 6);
+  const notes = ph.notes.map((n) => {
+    const p = n.p + shift;
+    return { ...n, p: pool.reduce((a, c) => (Math.abs(c - p) < Math.abs(a - p) ? c : a), pool[0]) };
+  });
+  return { ...ph, key, scale, pos, chords: chords.map((c) => ({ ...c })), notes: snapStrong(notes, ctx) };
 }
 
 // リズムを作り直し、元の音程の並び（輪郭）を保つ

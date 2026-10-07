@@ -1,7 +1,7 @@
 import { KEY_NAMES, parseProgression } from './theory.js';
 import { generateAcc, defaultAcc, accVariants, accName, realizeBar } from './accomp.js';
 import { START_DEGREES, PROGRESSIONS, PROG_NAMES } from './progressions.js';
-import { generatePhrase, makeVariants, copyPhrase, endingVariants, originLabel, STEPS_PER_BAR } from './generator.js';
+import { generatePhrase, makeVariants, copyPhrase, endingVariants, reharmonize, originLabel, STEPS_PER_BAR } from './generator.js';
 import * as audio from './audio.js';
 import { drawRoll } from './roll.js';
 import { buildMidi, downloadMidi } from './midi.js';
@@ -18,6 +18,7 @@ const state = {
   accDeck: [],
   accTargetId: null, // 伴奏を選ぶ対象のフレーズ
   accDefault: defaultAcc(), // これからキープするフレーズに付く伴奏
+  forcePos: null, // 次の候補をコード進行のこの位置から始める（進行の帯で指定・進行を変えた直後）
   contextOn: false,
   padOn: true,
   cardPlaying: true,
@@ -27,8 +28,8 @@ const state = {
 // ---------- 保存 ----------
 function save() {
   try {
-    const { settings, shelf, contextOn, padOn, judged, accDefault } = state;
-    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, judged, accDefault }));
+    const { settings, shelf, contextOn, padOn, judged, accDefault, forcePos } = state;
+    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, judged, accDefault, forcePos }));
   } catch (e) {
     /* 容量超過やプライベートモード */
   }
@@ -46,6 +47,7 @@ function load() {
     state.padOn = d.padOn !== false;
     state.judged = d.judged || 0;
     if (d.accDefault && d.accDefault.bars) state.accDefault = d.accDefault;
+    state.forcePos = Number.isInteger(d.forcePos) ? d.forcePos : null;
   } catch (e) {
     /* 壊れたデータは無視 */
   }
@@ -65,7 +67,8 @@ const lastKept = () => state.shelf[state.shelf.length - 1];
 function nextSlot(bars) {
   const prog = progression();
   const last = lastKept();
-  const pos = !last ? 0 : last.pos != null ? last.pos + last.bars : state.shelf.reduce((a, p) => a + p.bars, 0);
+  const pos =
+    state.forcePos != null ? state.forcePos : !last ? 0 : last.pos != null ? last.pos + last.bars : state.shelf.reduce((a, p) => a + p.bars, 0);
   const chords = [];
   for (let b = 0; b < bars; b++) chords.push(prog[(pos + b) % prog.length]);
   return { chords, bars, pos: pos % prog.length };
@@ -213,8 +216,34 @@ function renderDeck() {
   renderBack();
   updateCtxLabel();
   updateLastBar();
+  renderProgBar();
   bindSwipe(top);
   playCurrent();
+}
+
+// コード進行の帯：今のカードが進行のどこかを示す。タップでそのコードから作り直す
+function renderProgBar() {
+  const bar = $('progBar');
+  bar.classList.toggle('hidden', state.mode === 'acc');
+  const prog = progression();
+  const top = topCard();
+  const ph = top && top._phrase;
+  const covered = new Set();
+  if (ph && ph.pos != null) for (let b = 0; b < ph.bars; b++) covered.add((ph.pos + b) % prog.length);
+  bar.innerHTML = '';
+  prog.forEach((c, i) => {
+    const b = document.createElement('button');
+    b.textContent = c.label;
+    b.classList.toggle('cur', covered.has(i));
+    b.onclick = () => {
+      state.forcePos = i;
+      state.deck = state.deck.filter(fitsSlot);
+      save();
+      renderDeck();
+      toast(`${i + 1}つ目の ${c.label} から作ります`);
+    };
+    bar.append(b);
+  });
 }
 
 function updateCtxLabel() {
@@ -302,6 +331,7 @@ function decide(kind) {
     const ph = item;
     ph.acc = ph.acc || (ph.origin === 'ending' && lastKept() ? lastKept().acc : null) || state.accDefault;
     state.shelf.push(ph);
+    state.forcePos = null;
     // 担当コードが変わるので、合わなくなった候補は作り直す（語尾違いを選んだら他の語尾違いは片付ける）
     state.deck = state.deck.filter((p) => fitsSlot(p) && !(ph.origin === 'ending' && p.origin === 'ending'));
     state.accTargetId = null;
@@ -342,6 +372,7 @@ function repeatLast() {
   const last = lastKept();
   if (!last) return;
   state.shelf.push(copyPhrase(last));
+  state.forcePos = null;
   state.deck = state.deck.filter(fitsSlot);
   updateCounts();
   updateLastBar();
@@ -674,8 +705,18 @@ function bindSettings() {
   $('btnApply').onclick = () => {
     if (!parseProgression(draft.prog, draft.key, draft.scale).length) return;
     const regen = ['key', 'scale', 'prog', 'bars'].some((k) => draft[k] !== state.settings[k]);
+    const harmonyChanged = ['key', 'scale', 'prog'].some((k) => draft[k] !== state.settings[k]);
     state.settings = { ...draft };
     if (regen) state.deck = [];
+    if (harmonyChanged) {
+      if (state.shelf.length && confirm(`棚の${state.shelf.length}フレーズにも新しいコード進行を当てはめますか？\n（メロディの強拍はコードに合わせて少し変わります。キャンセルで棚はそのまま）`)) {
+        reharmonizeShelf();
+        state.forcePos = null;
+      } else {
+        // 新しい進行は先頭のコードから使う
+        state.forcePos = 0;
+      }
+    }
     state.accDeck = [];
     save();
     updateInfo();
@@ -685,6 +726,25 @@ function bindSettings() {
   };
   $('btnSettings').onclick = () => openSheet(true);
   $('sheetBackdrop').onclick = () => openSheet(false);
+}
+
+// 棚を先頭から新しい進行に沿って並べ直す。くり返し（同じ動機の連続）は同じコードのまま
+function reharmonizeShelf() {
+  const prog = progression();
+  const { key, scale } = state.settings;
+  let next = 0;
+  let prev = null;
+  state.shelf = state.shelf.map((ph) => {
+    const isRepeat = prev && (ph.origin === 'repeat' || ph.origin === 'ending') && motifOf(ph) === motifOf(prev);
+    const pos = isRepeat ? prev.pos : next % prog.length;
+    const chords = [];
+    for (let b = 0; b < ph.bars; b++) chords.push(prog[(pos + b) % prog.length]);
+    const out = reharmonize(ph, { key, scale, chords, pos });
+    next = pos + ph.bars;
+    prev = out;
+    return out;
+  });
+  updateLastBar();
 }
 
 function updateInfo() {

@@ -55,6 +55,14 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .modeseg button.on { background: var(--panel-2); color: var(--text); }
 .modeseg button[data-mode="acc"].on { color: var(--acc); }
 
+/* コード進行の帯 */
+.progbar { display: flex; gap: 4px; margin-top: 6px; overflow-x: auto; }
+.progbar button {
+  flex: 1 0 auto; min-width: 44px; height: 34px; padding: 0 8px; border-radius: 8px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--muted); font-weight: 700; font-size: 13px;
+}
+.progbar button.cur { background: rgba(124, 140, 255, 0.22); border-color: var(--accent); color: var(--text); }
+
 /* カード */
 .deck { position: relative; flex: 1; min-height: 220px; margin: 8px 0 12px; }
 .card {
