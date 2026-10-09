@@ -574,15 +574,14 @@ function renderShelf() {
     };
     li.querySelector('canvas').onclick = () => at() >= 0 && playRow(at());
     li.querySelector('.accbtn').onclick = () => openPicker(ph);
-    // 進行が切り替わるフレーズには区切りの印
-    if (ph.progChange) {
-      li.classList.add('secstart');
-      const badge = document.createElement('button');
-      badge.className = 'secbadge';
-      badge.textContent = `▶ ${ph.progChange}`;
-      badge.onclick = () => openSecSheet(ph);
-      li.append(badge);
-    }
+    // 進行：どのフレーズからでも切り替えられる。切り替わるフレーズには区切りの印
+    const badge = document.createElement('button');
+    badge.className = 'secbadge' + (ph.progChange ? ' on' : '');
+    badge.textContent = ph.progChange ? `▶ ${ph.progChange}` : '進行 ▾';
+    badge.setAttribute('aria-label', 'このフレーズから進行を変える');
+    badge.onclick = () => openSecSheet(ph);
+    li.classList.toggle('secstart', !!ph.progChange);
+    li.append(badge);
     // 小節数が分かるよう、短いフレーズは幅も短く
     const maxBars = Math.max(...state.shelf.map((p) => p.bars));
     li.querySelector('canvas').style.width = `${(ph.bars / maxBars) * 100}%`;
@@ -871,10 +870,10 @@ function openSecSheet(target) {
   const k = target ? state.shelf.indexOf(target) + 1 : 0;
   $('secTitle').textContent = target ? `棚の${k}番から使うコード進行` : 'ここから使うコード進行';
   $('secHint').textContent = target
-    ? '選ぶとこのフレーズから新しい進行になり、後ろのフレーズのコードも付け直します'
+    ? `今は ${target.progText}。選ぶとこのフレーズから新しい進行の1つ目のコードで始まり、後ろのフレーズのコードも付け直します`
     : '次のフレーズから、選んだ進行の1つ目のコードで始めます（Aメロ→サビのような切り替え）';
-  $('btnSecRemove').classList.toggle('hidden', !target);
-  $('secProg').value = target ? target.progChange : nextProgText();
+  $('btnSecRemove').classList.toggle('hidden', !(target && target.progChange));
+  $('secProg').value = target ? target.progChange || target.progText : nextProgText();
   renderSecSheet();
   $('secSheet').classList.add('open');
   $('secSheet').setAttribute('aria-hidden', 'false');
