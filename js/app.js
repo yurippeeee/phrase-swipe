@@ -26,6 +26,7 @@ const state = {
   nearDeck: [],
   contextOn: false,
   padOn: true,
+  melodyOn: true, // 棚の再生でメロディを鳴らすか（伴奏だけ聴く用）
   cardPlaying: true,
   judged: 0,
 };
@@ -33,8 +34,11 @@ const state = {
 // ---------- 保存 ----------
 function save() {
   try {
-    const { settings, shelf, contextOn, padOn, judged, accDefault, forcePos, accLib, pendingProg } = state;
-    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, judged, accDefault, forcePos, accLib, pendingProg }));
+    const { settings, shelf, contextOn, padOn, melodyOn, judged, accDefault, forcePos, accLib, pendingProg } = state;
+    localStorage.setItem(
+      STORE_KEY,
+      JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, melodyOn, judged, accDefault, forcePos, accLib, pendingProg }),
+    );
   } catch (e) {
     /* 容量超過やプライベートモード */
   }
@@ -50,6 +54,7 @@ function load() {
     state.shelf = Array.isArray(d.shelf) ? d.shelf : [];
     state.contextOn = !!d.contextOn;
     state.padOn = d.padOn !== false;
+    state.melodyOn = d.melodyOn !== false;
     state.judged = d.judged || 0;
     // 一度も伴奏を選んでいなければ（旧標準のパッドのまま）新しい標準に置き換える
     const isOldDefault = (t) => t && t.id === 'default';
@@ -238,6 +243,8 @@ function updateAccLabels() {
   const name = state.padOn ? accName(state.accDefault) : 'OFF';
   $('tglPad').textContent = state.mode === 'acc' ? '伴奏' : `伴奏：${name}`;
   $('tglPad2').textContent = `伴奏：${state.padOn ? 'ON' : 'OFF'}`;
+  $('tglMelody').textContent = `メロディ：${state.melodyOn ? 'ON' : 'OFF'}`;
+  $('tglMelody').setAttribute('aria-pressed', String(state.melodyOn));
 }
 
 function applyAccToAll(t = state.accDeck[0]) {
@@ -686,6 +693,7 @@ function drawShelfRows(playStep = -1) {
 function playPhrases(indices) {
   if (!audio.isUnlocked() || !indices.length) return;
   const seq = buildSeq(indices.map((i) => state.shelf[i]), state.padOn);
+  if (!state.melodyOn) seq.notes = [];
   songRanges = seq.ranges;
   songRows = indices;
   songPlaying = true;
@@ -1194,6 +1202,13 @@ function init() {
   $('tglContext').onclick = () => setContext(!state.contextOn);
   $('tglPad').onclick = () => setPad(!state.padOn);
   $('tglPad2').onclick = () => setPad(!state.padOn);
+  $('tglMelody').onclick = () => {
+    state.melodyOn = !state.melodyOn;
+    updateAccLabels();
+    save();
+    if (songPlaying) playSong();
+    if (!state.melodyOn && !state.padOn) toast('メロディも伴奏もOFFです');
+  };
   $('btnPlaySong').onclick = () => (songPlaying ? stopSong() : playSong());
   $('btnMidi').onclick = exportMidi;
   $('btnClear').onclick = () => {
