@@ -33,7 +33,9 @@ export const ACC_STYLES = {
 
 export function accName(t) {
   if (!t) return '';
-  return (ACC_STYLES[t.style] || t.style) + (t.fill ? '＋フィル' : '');
+  const f = t.fit || 0;
+  const fit = f < 0.15 ? '' : `・合いの手${Math.round(f * 100)}%`;
+  return (ACC_STYLES[t.style] || t.style) + (t.fill ? '＋フィル' : '') + fit;
 }
 
 const ev = (s, d, v, inst = 'keys') => ({ s, d, v, inst });
@@ -171,11 +173,13 @@ function withFill(bar) {
   return [...keep, ...fill.filter((e) => e.s < 16)];
 }
 
-export function generateAcc(style) {
+// fitBias: 合いの手の強さの目安（0〜1）。その前後で散らす。null なら全体からランダム
+export function generateAcc(style, fitBias = null) {
   const st = style || weighted(Object.keys(ACC_STYLES), [0.6, 1, 0.8, 1.2, 1.1, 1, 0.8, 1.1, 1.1]);
   const a = barFor(st);
   const fill = rand() < 0.45;
-  return { id: newId(), style: st, reg: pick([50, 52, 52, 55]), fill, bars: fill ? [a, withFill(a)] : [a] };
+  const fit = fitBias == null ? pick([0, 0.35, 0.65, 1]) : Math.max(0, Math.min(1, fitBias + (rand() - 0.5) * 0.4));
+  return { id: newId(), style: st, reg: pick([50, 52, 52, 55]), fill, fit: Math.round(fit * 20) / 20, bars: fill ? [a, withFill(a)] : [a] };
 }
 
 // 伴奏を選ぶ前の標準：8分で刻む和音＋拍の頭のベース（テンポが伴奏でも分かるように）
@@ -195,13 +199,67 @@ export function accVariants(t, count = 5) {
   const out = [];
   out.push({ ...t, id: newId(), fill: !t.fill, bars: t.fill ? [t.bars[0]] : [t.bars[0], withFill(t.bars[0])] });
   out.push({ ...t, id: newId(), reg: t.reg >= 52 ? t.reg - 4 : t.reg + 5 });
-  while (out.length < count) out.push({ ...generateAcc(t.style), reg: t.reg });
+  const f = t.fit || 0;
+  out.push({ ...t, id: newId(), fit: f >= 0.5 ? Math.max(0, f - 0.35) : Math.min(1, f + 0.35) });
+  while (out.length < count) out.push({ ...generateAcc(t.style, f), reg: t.reg });
   return out;
 }
 
-// コードに当てはめて音（{p,s,d,inst}）にする
-export function realizeBar(t, chord, barIndex) {
-  const bar = t.bars[barIndex % t.bars.length];
+// 同じ型・同じ小節・同じ位置なら毎回同じになる乱数（再生のたびに変わらないように）
+function hashRand(...keys) {
+  let h = 2166136261;
+  for (const ch of keys.join('|')) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 16777619);
+  }
+  h ^= h >>> 13;
+  h = Math.imul(h, 0x5bd1e995);
+  h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+
+// 合いの手：メロディの間（休み・伸ばし）に単音のフレーズを入れ、メロディの出だしとぶつかる音は間引く。
+// melody: この小節で鳴っているメロディ [{s,d}]（小節頭からのステップ）
+function fitToMelody(t, bar, barIndex, melody) {
+  const f = t.fit || 0;
+  if (!f || !melody) return bar;
+  // メロディの出だし直後（2ステップ）は「動いている」。伸ばしの後半と休みは「間」
+  const busy = new Array(16).fill(false);
+  for (const n of melody) for (let s = Math.max(0, n.s); s < Math.min(16, n.s + Math.min(n.d, 2)); s++) busy[s] = true;
+  const R = (...k) => hashRand(t.id, barIndex, ...k);
+  const kept = bar.filter((e) => {
+    if (e.inst !== 'keys' || e.s === 0 || !busy[e.s]) return true;
+    return R('drop', e.s) >= (e.v.includes('C') ? f * 0.6 : f * 0.9);
+  });
+  const fills = [];
+  for (let s = 0; s < 16; ) {
+    if (busy[s]) {
+      s++;
+      continue;
+    }
+    let e = s;
+    while (e < 16 && !busy[e]) e++;
+    const len = e - s;
+    if (len >= 2 && R('gap', s) < f) {
+      // 間の終わりに向かって最大4音、次のメロディへつなぐ
+      const rate = len >= 4 && R('rate', s) < 0.5 ? 2 : 1;
+      const from = Math.max(s, e - rate * 4);
+      const up = R('dir', s) < 0.6;
+      const base = Math.floor(R('base', s) * 3);
+      let k = 0;
+      for (let x = from; x + rate <= e; x += rate, k++) {
+        if (kept.some((ev) => ev.inst === 'keys' && ev.s === x)) continue;
+        fills.push({ s: x, d: rate, v: [up ? base + k : Math.max(0, base + 3 - k)], inst: 'keys' });
+      }
+    }
+    s = e;
+  }
+  return [...kept, ...fills];
+}
+
+// コードに当てはめて音（{p,s,d,inst}）にする。melody を渡すと合いの手を合わせる
+export function realizeBar(t, chord, barIndex, melody) {
+  const bar = fitToMelody(t, t.bars[barIndex % t.bars.length], barIndex, melody);
   const root = 40 + ((chord.rootPc - 4 + 12) % 12); // E2〜D#3（スマホでも聞こえる高さ）
   // 段: reg 以上のコードトーンを下から順に
   const ladder = [];

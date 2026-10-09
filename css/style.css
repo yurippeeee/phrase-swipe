@@ -94,7 +94,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .tag.repeat, .tag.ending { color: var(--keep); }
 .tag.acc { color: var(--acc); }
 .card-head .ctx { font-size: 12px; }
-.card-head .num { margin-left: auto; }
+.card-head .num { margin-left: auto; white-space: nowrap; }
 .card canvas { flex: 1; width: 100%; min-height: 0; border-radius: 12px; display: block; }
 .card-foot { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
 .stamp {
@@ -110,6 +110,12 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .lastinfo { display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--muted); min-width: 30px; }
 .lastinfo b { font-size: 15px; color: var(--text); }
 .lastbar .chip { padding: 0 12px; }
+
+/* 合いの手スライダー（伴奏モード） */
+.fitbar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; font-weight: 700; color: var(--acc); }
+.fitbar small { color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.fitbar input[type="range"] { flex: 1; min-width: 0; height: 36px; margin: 0; accent-color: var(--acc); }
+.fitbar output { min-width: 38px; text-align: right; color: var(--text); }
 
 /* トグル */
 .toggles { display: flex; gap: 8px; justify-content: center; margin-bottom: 10px; }

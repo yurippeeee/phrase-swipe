@@ -27,6 +27,7 @@ const state = {
   contextOn: false,
   padOn: true,
   melodyOn: true, // 棚の再生でメロディを鳴らすか（伴奏だけ聴く用）
+  accFit: 0.5, // 伴奏の候補の合いの手の強さ（スライダー）
   cardPlaying: true,
   judged: 0,
 };
@@ -34,10 +35,10 @@ const state = {
 // ---------- 保存 ----------
 function save() {
   try {
-    const { settings, shelf, contextOn, padOn, melodyOn, judged, accDefault, forcePos, accLib, pendingProg } = state;
+    const { settings, shelf, contextOn, padOn, melodyOn, judged, accDefault, forcePos, accLib, pendingProg, accFit } = state;
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, melodyOn, judged, accDefault, forcePos, accLib, pendingProg }),
+      JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, melodyOn, judged, accDefault, forcePos, accLib, pendingProg, accFit }),
     );
   } catch (e) {
     /* 容量超過やプライベートモード */
@@ -55,6 +56,7 @@ function load() {
     state.contextOn = !!d.contextOn;
     state.padOn = d.padOn !== false;
     state.melodyOn = d.melodyOn !== false;
+    if (typeof d.accFit === 'number') state.accFit = d.accFit;
     state.judged = d.judged || 0;
     // 一度も伴奏を選んでいなければ（旧標準のパッドのまま）新しい標準に置き換える
     const isOldDefault = (t) => t && t.id === 'default';
@@ -158,7 +160,9 @@ function buildSeq(phrases, withAcc, accOverride) {
     const t = accOverride || accOf(ph);
     for (let b = 0; b < ph.bars; b++) {
       const c = ph.chords[b % ph.chords.length];
-      if (c) for (const a of realizeBar(t, c, b)) acc.push({ ...a, s: a.s + off + b * STEPS_PER_BAR });
+      // この小節で鳴っているメロディ（合いの手を合わせるため）
+      const mel = ph.notes.filter((n) => n.s < (b + 1) * STEPS_PER_BAR && n.s + n.d > b * STEPS_PER_BAR).map((n) => ({ s: n.s - b * STEPS_PER_BAR, d: n.d }));
+      if (c) for (const a of realizeBar(t, c, b, mel)) acc.push({ ...a, s: a.s + off + b * STEPS_PER_BAR });
     }
     ranges.push([off, off + ph.bars * STEPS_PER_BAR]);
     off += ph.bars * STEPS_PER_BAR;
@@ -224,7 +228,7 @@ function fillCur() {
     else while (state.nearDeck.length < 3) state.nearDeck.push(...nearVariants(t));
   }
   if (state.near) return;
-  if (state.mode === 'acc') while (state.accDeck.length < 3) state.accDeck.push(generateAcc());
+  if (state.mode === 'acc') while (state.accDeck.length < 3) state.accDeck.push(generateAcc(null, state.accFit));
   else fillDeck();
 }
 
@@ -233,6 +237,7 @@ function setMode(mode) {
   for (const b of document.querySelectorAll('#modeSeg button')) b.classList.toggle('on', b.dataset.mode === mode);
   $('tglContext').classList.toggle('hidden', mode === 'acc');
   $('btnAccAll').classList.toggle('hidden', mode !== 'acc');
+  $('fitBar').classList.toggle('hidden', mode !== 'acc');
   updateAccLabels();
   if (!$('viewSwipe').classList.contains('hidden')) renderDeck();
 }
@@ -388,7 +393,7 @@ function renderProgBar() {
 function updateCtxLabel() {
   const top = topCard();
   if (!top) return;
-  if (state.mode === 'acc') top.querySelector('.ctx').textContent = '♥で決定';
+  if (state.mode === 'acc') top.querySelector('.ctx').textContent = '';
   else top.querySelector('.ctx').textContent = state.contextOn ? (lastKept() ? '◀ 直前のキープから' : '（棚が空）') : '';
 }
 
@@ -1161,6 +1166,24 @@ function init() {
   $('btnEnding').onclick = endingsOfLast;
   $('btnPlayCard').onclick = togglePlay;
   $('btnAccAll').onclick = () => applyAccToAll();
+  // 合いの手：動かすと今のカードにすぐ反映（離したら鳴らし直す）。次の候補もこの強さの前後で作る
+  const showFit = () => ($('fitOut').textContent = `${Math.round(state.accFit * 100)}%`);
+  $('fitRange').value = Math.round(state.accFit * 100);
+  showFit();
+  $('fitRange').addEventListener('input', (e) => {
+    state.accFit = +e.target.value / 100;
+    showFit();
+    const t = state.accDeck[0];
+    const top = topCard();
+    if (state.mode !== 'acc' || !t || !top || !top._acc) return;
+    t.fit = state.accFit;
+    top.querySelector('.tag').textContent = accName(t);
+    top._segs = [{ phrase: top._phrase, acc: buildSeq([top._phrase], true, t).acc, accFocus: true }];
+  });
+  $('fitRange').addEventListener('change', () => {
+    save();
+    playCurrent();
+  });
   $('btnPickClose').onclick = closePicker;
   $('btnSecClose').onclick = closeSecSheet;
   $('secBackdrop').onclick = closeSecSheet;

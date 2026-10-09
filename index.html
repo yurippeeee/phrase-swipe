@@ -7,8 +7,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Phrase Swipe</title>
-  <meta name="app-version" content="2026100715">
-  <link rel="stylesheet" href="css/style.css?v=2026100715">
+  <meta name="app-version" content="2026100716">
+  <link rel="stylesheet" href="css/style.css?v=2026100716">
 </head>
 <body>
   <div id="app">
@@ -30,6 +30,13 @@
         <div class="lastinfo">直前<b id="lastCount"></b></div>
         <button class="chip" id="btnRepeat">くり返す</button>
         <button class="chip" id="btnEnding">語尾違い</button>
+      </div>
+      <div class="fitbar hidden" id="fitBar">
+        <span>合いの手</span>
+        <small>控えめ</small>
+        <input type="range" id="fitRange" min="0" max="100" step="5" aria-label="合いの手の強さ">
+        <small>間を埋める</small>
+        <output id="fitOut"></output>
       </div>
       <div class="toggles">
         <button class="chip" id="tglContext" aria-pressed="false">文脈試聴</button>
@@ -165,17 +172,17 @@
   <script type="importmap">
   {
     "imports": {
-      "./js/accomp.js": "./js/accomp.js?v=2026100715",
-      "./js/app.js": "./js/app.js?v=2026100715",
-      "./js/audio.js": "./js/audio.js?v=2026100715",
-      "./js/generator.js": "./js/generator.js?v=2026100715",
-      "./js/midi.js": "./js/midi.js?v=2026100715",
-      "./js/progressions.js": "./js/progressions.js?v=2026100715",
-      "./js/roll.js": "./js/roll.js?v=2026100715",
-      "./js/theory.js": "./js/theory.js?v=2026100715"
+      "./js/accomp.js": "./js/accomp.js?v=2026100716",
+      "./js/app.js": "./js/app.js?v=2026100716",
+      "./js/audio.js": "./js/audio.js?v=2026100716",
+      "./js/generator.js": "./js/generator.js?v=2026100716",
+      "./js/midi.js": "./js/midi.js?v=2026100716",
+      "./js/progressions.js": "./js/progressions.js?v=2026100716",
+      "./js/roll.js": "./js/roll.js?v=2026100716",
+      "./js/theory.js": "./js/theory.js?v=2026100716"
     }
   }
   </script>
-  <script type="module" src="js/app.js?v=2026100715"></script>
+  <script type="module" src="js/app.js?v=2026100716"></script>
 </body>
 </html>
