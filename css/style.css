@@ -67,11 +67,12 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 @keyframes glow { 50% { box-shadow: 0 0 0 4px rgba(124, 140, 255, 0.35); } }
 .progbar.pending button:not(.change) { border-style: dashed; }
 .row.secstart { border-left: 3px solid var(--accent); }
-.row .secbadge {
-  position: absolute; top: 3px; right: 126px; min-height: 26px; padding: 2px 9px; border-radius: 8px;
+.row .badges { position: absolute; top: 3px; right: 126px; display: flex; gap: 4px; }
+.row .badges button {
+  min-height: 26px; padding: 2px 9px; border-radius: 8px;
   background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700;
 }
-.row .secbadge.on { background: rgba(124, 140, 255, 0.22); border-color: var(--accent); color: var(--text); }
+.row .badges .secbadge.on { background: rgba(124, 140, 255, 0.22); border-color: var(--accent); color: var(--text); }
 
 /* カード */
 .deck { position: relative; flex: 1; min-height: 220px; margin: 8px 0 12px; }
@@ -168,7 +169,10 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 /* 棚：フレーズ／伴奏 */
 .shelfpane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #shelfSeg { margin-bottom: 4px; }
-.row.accrow { grid-template-columns: 1fr 44px 52px 40px; }
+.row.accrow { grid-template-columns: 1fr 40px 52px 48px 36px; }
+.row.accrow .near { color: var(--acc); font-size: 13px; }
+.progbar .neartitle { flex: 1; align-self: center; font-size: 12px; color: var(--note-pass); font-weight: 700; }
+.tag.chord { color: #9be37c; }
 .row.accrow .name { position: absolute; left: 12px; top: 8px; font-size: 12px; font-weight: 700; color: var(--acc); pointer-events: none; }
 .row.accrow .use { position: absolute; left: 12px; bottom: 8px; font-size: 10px; color: var(--muted); pointer-events: none; }
 .row.accrow button { height: 68px; font-size: 15px; font-weight: 700; color: var(--muted); }

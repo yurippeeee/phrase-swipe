@@ -1,7 +1,7 @@
 // ルールベースのフレーズ生成
 // フレーズ: { id, bars, notes:[{p:MIDI, s:開始(16分), d:長さ(16分)}], chords:[コード×小節数], origin, tag }
 
-import { scalePitches } from './theory.js';
+import { scalePitches, parseProgression } from './theory.js';
 
 export const STEPS_PER_BAR = 16;
 
@@ -368,7 +368,7 @@ function regenTail(notes, ctx, len) {
 }
 
 // ---------- 派生（これに近いの） ----------
-const ORIGIN_LABEL = { new: '新規', rhythm: 'リズム違い', pitch: '音程違い', partial: '一部変更', repeat: 'くり返し', ending: '語尾違い' };
+const ORIGIN_LABEL = { new: '新規', rhythm: 'リズム違い', pitch: '音程違い', partial: '一部変更', repeat: 'くり返し', ending: '語尾違い', chord: 'コード違い' };
 export const originLabel = (o) => ORIGIN_LABEL[o] || o;
 
 function ctxOf(phrase) {
@@ -467,6 +467,38 @@ function varyPartial(ph) {
     return snapStrong(notes, ctx);
   }
   return regenTail(ph.notes, ctx, 8);
+}
+
+// ---------- コード違い ----------
+// 代わりに使える近いコード（度数）。ダイアトニックの代理コードとセブンス
+const SUBS = {
+  major: { I: ['vi', 'iii', 'Imaj7', 'IV'], ii: ['IV', 'ii7', 'vi'], iii: ['I', 'vi', 'iii7', 'V'], IV: ['ii', 'vi', 'IVmaj7', 'iv'], V: ['iii', 'V7', 'vii°', 'IV'], vi: ['I', 'IV', 'iii', 'vi7'], 'vii°': ['V', 'V7'] },
+  minor: { i: ['III', 'VI', 'i7', 'iv'], iv: ['ii°', 'VI', 'iv7'], v: ['V', 'VII', 'v7'], V: ['v', 'VII', 'V7'], VI: ['iv', 'i', 'VImaj7'], III: ['i', 'VII', 'IIImaj7'], VII: ['v', 'V', 'VII7'], 'ii°': ['iv', 'VII'] },
+};
+const baseDegree = (deg) => (deg || '').replace(/(maj7|M7|7)$/, '');
+
+// 1小節のコードを近いコードに差し替えた候補。メロディは強拍を新しいコードに合わせる
+export function chordVariants(ph, count = 3) {
+  const out = [];
+  const seen = new Set([ph.chords.map((c) => c.label).join(' ')]);
+  for (let tries = 0; out.length < count && tries < count * 10; tries++) {
+    const b = Math.floor(rand() * ph.bars);
+    const cur = ph.chords[b];
+    const subs = (SUBS[ph.scale] || SUBS.major)[baseDegree(cur.degree)] || [];
+    if (!subs.length) continue;
+    const deg = pick(subs);
+    const c = parseProgression(deg, ph.key, ph.scale)[0];
+    if (!c) continue;
+    const chords = ph.chords.map((x, i) => (i === b ? c : x));
+    const k = chords.map((x) => x.label).join(' ');
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const ctx = { ...ctxOf(ph), chords };
+    const v = makePhrase(ctx, snapStrong(ph.notes.map((n) => ({ ...n })), ctx), 'chord', ph.id);
+    v.chordOverride = chords.map((x) => x.degree);
+    out.push(v);
+  }
+  return out;
 }
 
 const sig = (notes) => notes.map((n) => `${n.p}.${n.s}.${n.d}`).join(',');

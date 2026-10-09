@@ -1,7 +1,7 @@
 import { KEY_NAMES, parseProgression } from './theory.js';
 import { generateAcc, defaultAcc, DEFAULT_ACC_ID, accVariants, accName, realizeBar } from './accomp.js';
 import { START_DEGREES, PROGRESSIONS, PROG_NAMES } from './progressions.js';
-import { generatePhrase, makeVariants, copyPhrase, endingVariants, transposePhrase, originLabel, STEPS_PER_BAR } from './generator.js';
+import { generatePhrase, makeVariants, chordVariants, copyPhrase, endingVariants, transposePhrase, originLabel, STEPS_PER_BAR } from './generator.js';
 import * as audio from './audio.js';
 import { drawRoll } from './roll.js';
 import { buildMidi, downloadMidi } from './midi.js';
@@ -22,6 +22,8 @@ const state = {
   shelfTab: 'phrases',
   forcePos: null, // 次の候補をコード進行のこの位置から始める（進行の帯で指定）
   pendingProg: null, // 次のフレーズから切り替えるコード進行（区切り）
+  near: null, // 棚のフレーズに近い候補を探索中 { id }
+  nearDeck: [],
   contextOn: false,
   padOn: true,
   cardPlaying: true,
@@ -99,6 +101,10 @@ function relayout() {
     ph.pos = pos % prog.length;
     ph.chords = [];
     for (let b = 0; b < ph.bars; b++) ph.chords.push({ ...prog[(pos + b) % prog.length] });
+    // 「コード違い」で差し替えた小節のコード
+    if (Array.isArray(ph.chordOverride) && ph.chordOverride.length === ph.bars) {
+      ph.chords = ph.chordOverride.map((d, b) => parseProgression(d, state.settings.key, state.settings.scale)[0] || ph.chords[b]);
+    }
     pos += ph.bars;
   }
 }
@@ -156,7 +162,37 @@ function buildSeq(phrases, withAcc, accOverride) {
 }
 
 // ---------- 伴奏モード ----------
-const curDeck = () => (state.mode === 'acc' ? state.accDeck : state.deck);
+const curDeck = () => (state.near ? state.nearDeck : state.mode === 'acc' ? state.accDeck : state.deck);
+
+// ---------- 棚のフレーズに近い候補を探す ----------
+const nearTarget = () => (state.near && state.shelf.find((p) => p.id === state.near.id)) || null;
+
+// メロディ違い（リズム・音程・一部・語尾）とコード違いを混ぜる
+function nearVariants(t) {
+  const vars = [...makeVariants(t, 4), ...chordVariants(t, 2), ...endingVariants(t, { chords: t.chords, pos: t.pos }, 1)];
+  for (let i = vars.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [vars[i], vars[j]] = [vars[j], vars[i]];
+  }
+  for (const v of vars) v.acc = t.acc;
+  return vars;
+}
+
+function startNear(ph) {
+  state.near = { id: ph.id };
+  state.nearDeck = [];
+  state.accTargetId = null;
+  state.mode = 'melody';
+  setMode('melody');
+  showView('viewSwipe');
+}
+
+function endNear(toShelf) {
+  state.near = null;
+  state.nearDeck = [];
+  if (toShelf) showView('viewShelf');
+  else renderDeck();
+}
 
 // 伴奏を合わせる対象：棚で指定したフレーズ → 直前のキープ → メロディ候補
 const isStd = (t) => !t || t.id === DEFAULT_ACC_ID || t.id === 'default';
@@ -177,6 +213,12 @@ function accTarget() {
 }
 
 function fillCur() {
+  if (state.near) {
+    const t = nearTarget();
+    if (!t) state.near = null;
+    else while (state.nearDeck.length < 3) state.nearDeck.push(...nearVariants(t));
+  }
+  if (state.near) return;
   if (state.mode === 'acc') while (state.accDeck.length < 3) state.accDeck.push(generateAcc());
   else fillDeck();
 }
@@ -225,6 +267,7 @@ function cardEl(item, behind) {
   tag.textContent = originLabel(phrase.origin);
   tag.classList.add(phrase.origin);
   el.querySelector('.num').textContent = `#${state.judged + (behind ? 2 : 1)}`;
+  if (state.near) el.querySelector('.card-foot span:last-child').textContent = '差し替え →';
   el._phrase = phrase;
   return el;
 }
@@ -252,7 +295,8 @@ function segmentsFor(el) {
 }
 
 function cardSegments(phrase) {
-  const last = lastKept();
+  const t = nearTarget();
+  const last = t ? state.shelf[state.shelf.indexOf(t) - 1] : lastKept();
   return state.contextOn && last ? [{ phrase: last, faded: true }, { phrase }] : [{ phrase }];
 }
 
@@ -282,6 +326,17 @@ function renderDeck() {
 function renderProgBar() {
   const bar = $('progBar');
   bar.classList.toggle('hidden', state.mode === 'acc');
+  const nt = nearTarget();
+  if (nt) {
+    bar.innerHTML = `<span class="neartitle">棚の${state.shelf.indexOf(nt) + 1}番に近いのを探索中（♥で差し替え）</span>`;
+    const stop = document.createElement('button');
+    stop.className = 'change';
+    stop.textContent = 'やめる';
+    stop.onclick = () => endNear(true);
+    bar.append(stop);
+    bar.classList.remove('pending');
+    return;
+  }
   const prog = progFrom(nextProgText());
   const top = topCard();
   const ph = top && top._phrase;
@@ -398,7 +453,21 @@ function decide(kind) {
   if (!el || deciding) return;
   deciding = true;
   const item = curDeck().shift();
-  if (kind === 'keep' && state.mode === 'acc') {
+  const nearT = nearTarget();
+  if (kind === 'keep' && nearT) {
+    // 棚のフレーズと差し替える（区切り・伴奏は元のまま）
+    const k = state.shelf.indexOf(nearT);
+    const np = { ...item, acc: nearT.acc, progChange: nearT.progChange, jump: nearT.jump };
+    delete np.motif;
+    const changed = item.chords.map((c) => c.label).join(' ') !== nearT.chords.map((c) => c.label).join(' ');
+    if (changed) np.chordOverride = item.chords.map((c) => c.degree);
+    else if (nearT.chordOverride) np.chordOverride = nearT.chordOverride;
+    else delete np.chordOverride;
+    state.shelf[k] = np;
+    relayout();
+    toast(`棚の${k + 1}番を差し替えました`);
+    setTimeout(() => endNear(true), 250);
+  } else if (kind === 'keep' && state.mode === 'acc') {
     const one = accSpecific();
     addToLib(item);
     if (one) {
@@ -450,7 +519,7 @@ function runLength() {
 
 function updateLastBar() {
   const last = lastKept();
-  $('lastBar').classList.toggle('hidden', !last || state.mode === 'acc');
+  $('lastBar').classList.toggle('hidden', !last || state.mode === 'acc' || !!state.near);
   if (!last) return;
   $('lastCount').textContent = `×${runLength()}`;
   drawRoll($('lastRoll'), [{ phrase: last }], { labels: false });
@@ -463,6 +532,7 @@ function repeatLast() {
   const copy = copyPhrase(last);
   delete copy.jump;
   delete copy.progChange;
+  delete copy.chordOverride;
   if (state.forcePos != null) copy.jump = state.forcePos;
   if (state.pendingProg) copy.progChange = state.pendingProg;
   state.shelf.push(copy);
@@ -565,6 +635,7 @@ function renderShelf() {
       const copy = copyPhrase(ph);
       delete copy.jump;
       delete copy.progChange;
+      delete copy.chordOverride;
       state.shelf.splice(k + 1, 0, copy);
       relayout();
       updateCounts();
@@ -575,13 +646,20 @@ function renderShelf() {
     li.querySelector('canvas').onclick = () => at() >= 0 && playRow(at());
     li.querySelector('.accbtn').onclick = () => openPicker(ph);
     // 進行：どのフレーズからでも切り替えられる。切り替わるフレーズには区切りの印
+    const badges = document.createElement('div');
+    badges.className = 'badges';
+    const near = document.createElement('button');
+    near.textContent = '近いの';
+    near.setAttribute('aria-label', 'このフレーズに近い候補をスワイプで探す');
+    near.onclick = () => startNear(ph);
     const badge = document.createElement('button');
     badge.className = 'secbadge' + (ph.progChange ? ' on' : '');
     badge.textContent = ph.progChange ? `▶ ${ph.progChange}` : '進行 ▾';
     badge.setAttribute('aria-label', 'このフレーズから進行を変える');
     badge.onclick = () => openSecSheet(ph);
     li.classList.toggle('secstart', !!ph.progChange);
-    li.append(badge);
+    badges.append(near, badge);
+    li.append(badges);
     // 小節数が分かるよう、短いフレーズは幅も短く
     const maxBars = Math.max(...state.shelf.map((p) => p.bars));
     li.querySelector('canvas').style.width = `${(ph.bars / maxBars) * 100}%`;
@@ -650,13 +728,20 @@ function renderAccShelf() {
     const li = document.createElement('li');
     li.className = 'row accrow';
     const uses = state.shelf.filter((p) => accOf(p).id === t.id).length;
-    li.innerHTML = `<canvas></canvas><button class="play" aria-label="試聴">▶</button><button class="all">全体</button><button class="del" aria-label="削除">✕</button>
+    li.innerHTML = `<canvas></canvas><button class="play" aria-label="試聴">▶</button><button class="near">近いの</button><button class="all">全体</button><button class="del" aria-label="削除">✕</button>
       <span class="name">${i + 1}. ${accName(t)}</span><span class="use">${uses ? `${uses}フレーズで使用中` : '未使用'}${t.id === state.accDefault.id ? '・これからの標準' : ''}</span>`;
     li.querySelector('.play').onclick = () => {
       if (!audio.isUnlocked()) return;
       stopSong();
       const seq = buildSeq([base], true, t);
       audio.play({ ...seq, loop: false }, state.settings.bpm);
+    };
+    li.querySelector('.near').onclick = () => {
+      state.accDeck = [...accVariants(t, 5), ...state.accDeck];
+      state.accTargetId = null;
+      setMode('acc');
+      showView('viewSwipe');
+      toast(`「${accName(t)}」に近い伴奏を5つ用意`);
     };
     li.querySelector('.all').onclick = () => {
       applyAccToAll(t);
@@ -1030,8 +1115,10 @@ function showView(id) {
     state.deck = state.deck.filter(fitsSlot);
     renderDeck();
   } else {
-    // 棚に戻ったら「このフレーズだけ」の指定は解除（次に伴奏タブで選ぶときは曲全体）
+    // 棚に戻ったら「このフレーズだけ」の指定と、近いのの探索は解除
     state.accTargetId = null;
+    state.near = null;
+    state.nearDeck = [];
     renderShelf();
   }
 }
@@ -1100,6 +1187,8 @@ function init() {
   // タブから伴奏に切り替えたときは曲全体が対象
   for (const b of document.querySelectorAll('#modeSeg button')) b.onclick = () => {
     state.accTargetId = null;
+    state.near = null;
+    state.nearDeck = [];
     setMode(b.dataset.mode);
   };
   $('tglContext').onclick = () => setContext(!state.contextOn);
