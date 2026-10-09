@@ -7,8 +7,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Phrase Swipe</title>
-  <meta name="app-version" content="2026100711">
-  <link rel="stylesheet" href="css/style.css?v=2026100711">
+  <meta name="app-version" content="2026100712">
+  <link rel="stylesheet" href="css/style.css?v=2026100712">
 </head>
 <body>
   <div id="app">
@@ -80,6 +80,25 @@
       <button class="tab" id="btnSettings">設定</button>
     </nav>
 
+    <!-- 進行の区切り -->
+    <div class="sheet-backdrop hidden" id="secBackdrop"></div>
+    <section class="sheet" id="secSheet" aria-hidden="true">
+      <div class="sheet-grip"></div>
+      <h2 id="secTitle">ここから使うコード進行</h2>
+      <div class="pick-hint" id="secHint"></div>
+      <div class="field">先頭のコード
+        <div class="seg starts" id="secStart"></div>
+        <div class="prog-list" id="secList"></div>
+      </div>
+      <div class="field">カスタム（3コードや5コード以上も可）
+        <input type="text" id="secProg" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="IV-V-iii-vi">
+        <div class="prog-preview" id="secPreview"></div>
+      </div>
+      <button class="wide" id="btnSecCustom">カスタムの進行を使う</button>
+      <button class="wide hidden" id="btnSecRemove">区切りを消す（前の進行を続ける）</button>
+      <button class="wide primary" id="btnSecClose">やめる</button>
+    </section>
+
     <!-- 伴奏の棚から選ぶ -->
     <div class="sheet-backdrop hidden" id="pickBackdrop"></div>
     <section class="sheet" id="accPicker" aria-hidden="true">
@@ -145,17 +164,17 @@
   <script type="importmap">
   {
     "imports": {
-      "./js/accomp.js": "./js/accomp.js?v=2026100711",
-      "./js/app.js": "./js/app.js?v=2026100711",
-      "./js/audio.js": "./js/audio.js?v=2026100711",
-      "./js/generator.js": "./js/generator.js?v=2026100711",
-      "./js/midi.js": "./js/midi.js?v=2026100711",
-      "./js/progressions.js": "./js/progressions.js?v=2026100711",
-      "./js/roll.js": "./js/roll.js?v=2026100711",
-      "./js/theory.js": "./js/theory.js?v=2026100711"
+      "./js/accomp.js": "./js/accomp.js?v=2026100712",
+      "./js/app.js": "./js/app.js?v=2026100712",
+      "./js/audio.js": "./js/audio.js?v=2026100712",
+      "./js/generator.js": "./js/generator.js?v=2026100712",
+      "./js/midi.js": "./js/midi.js?v=2026100712",
+      "./js/progressions.js": "./js/progressions.js?v=2026100712",
+      "./js/roll.js": "./js/roll.js?v=2026100712",
+      "./js/theory.js": "./js/theory.js?v=2026100712"
     }
   }
   </script>
-  <script type="module" src="js/app.js?v=2026100711"></script>
+  <script type="module" src="js/app.js?v=2026100712"></script>
 </body>
 </html>

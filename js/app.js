@@ -21,6 +21,7 @@ const state = {
   accLib: [], // 伴奏の棚（♥した伴奏）
   shelfTab: 'phrases',
   forcePos: null, // 次の候補をコード進行のこの位置から始める（進行の帯で指定）
+  pendingProg: null, // 次のフレーズから切り替えるコード進行（区切り）
   contextOn: false,
   padOn: true,
   cardPlaying: true,
@@ -30,8 +31,8 @@ const state = {
 // ---------- 保存 ----------
 function save() {
   try {
-    const { settings, shelf, contextOn, padOn, judged, accDefault, forcePos, accLib } = state;
-    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, judged, accDefault, forcePos, accLib }));
+    const { settings, shelf, contextOn, padOn, judged, accDefault, forcePos, accLib, pendingProg } = state;
+    localStorage.setItem(STORE_KEY, JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, judged, accDefault, forcePos, accLib, pendingProg }));
   } catch (e) {
     /* 容量超過やプライベートモード */
   }
@@ -56,28 +57,45 @@ function load() {
     // 伴奏の棚が無かった頃のデータ：使っていた伴奏を棚に入れておく
     if (!Array.isArray(d.accLib)) for (const t of [state.accDefault, ...state.shelf.map((p) => p.acc)]) addToLib(t);
     state.forcePos = Number.isInteger(d.forcePos) ? d.forcePos : null;
+    state.pendingProg = typeof d.pendingProg === 'string' ? d.pendingProg : null;
   } catch (e) {
     /* 壊れたデータは無視 */
   }
 }
 
 // ---------- 候補の生成 ----------
-function progression() {
+function progFrom(text) {
   const s = state.settings;
-  const chords = parseProgression(s.prog, s.key, s.scale);
+  const chords = parseProgression(text, s.key, s.scale);
   return chords.length ? chords : parseProgression('I', s.key, s.scale);
+}
+
+// 曲の最初の区間の進行（設定）
+function progression() {
+  return progFrom(state.settings.prog);
 }
 
 const lastKept = () => state.shelf[state.shelf.length - 1];
 
+// 次のフレーズが使う進行：切り替え予約 → 直前のフレーズの区間 → 設定
+const nextProgText = () => state.pendingProg ?? (lastKept() ? lastKept().progText || state.settings.prog : state.settings.prog);
+
 // コードは曲の中の位置で決まる：棚の先頭から小節を数えて進行を当てはめる。
 // くり返したフレーズもメロディは同じまま、コードは次へ進む。
+// progChange: このフレーズから別の進行に切り替える（区切り）。その進行の1つ目のコードから数え直す
 // jump: 進行の帯で「このコードから」と指定して置いたフレーズは、そこから数え直す
 function relayout() {
-  const prog = progression();
+  let text = state.settings.prog;
+  let prog = progFrom(text);
   let pos = 0;
   for (const ph of state.shelf) {
+    if (ph.progChange) {
+      text = ph.progChange;
+      prog = progFrom(text);
+      pos = 0;
+    }
     if (ph.jump != null) pos = ph.jump;
+    ph.progText = text;
     ph.pos = pos % prog.length;
     ph.chords = [];
     for (let b = 0; b < ph.bars; b++) ph.chords.push({ ...prog[(pos + b) % prog.length] });
@@ -87,9 +105,9 @@ function relayout() {
 
 // 次のフレーズの位置（直前のフレーズの続き）と、担当するコード
 function nextSlot(bars) {
-  const prog = progression();
+  const prog = progFrom(nextProgText());
   const last = lastKept();
-  const pos = state.forcePos != null ? state.forcePos : last ? last.pos + last.bars : 0;
+  const pos = state.forcePos != null ? state.forcePos : state.pendingProg || !last ? 0 : last.pos + last.bars;
   const chords = [];
   for (let b = 0; b < bars; b++) chords.push(prog[(pos + b) % prog.length]);
   return { chords, bars, pos: pos % prog.length };
@@ -264,7 +282,7 @@ function renderDeck() {
 function renderProgBar() {
   const bar = $('progBar');
   bar.classList.toggle('hidden', state.mode === 'acc');
-  const prog = progression();
+  const prog = progFrom(nextProgText());
   const top = topCard();
   const ph = top && top._phrase;
   const covered = new Set();
@@ -283,6 +301,26 @@ function renderProgBar() {
     };
     bar.append(b);
   });
+  // 進行の切り替え。1周してキリのいいところでは目立たせる
+  const ch = document.createElement('button');
+  ch.className = 'change';
+  if (state.pendingProg) {
+    ch.textContent = '切替を取消';
+    ch.onclick = () => {
+      state.pendingProg = null;
+      state.deck = state.deck.filter(fitsSlot);
+      save();
+      renderDeck();
+      toast('進行の切り替えを取り消しました');
+    };
+  } else {
+    const atTop = state.shelf.length > 0 && nextSlot(1).pos === 0;
+    ch.textContent = atTop ? '1周！進行を変える' : '進行を変える';
+    ch.classList.toggle('hint', atTop);
+    ch.onclick = () => openSecSheet(null);
+  }
+  bar.append(ch);
+  bar.classList.toggle('pending', !!state.pendingProg);
 }
 
 function updateCtxLabel() {
@@ -378,8 +416,10 @@ function decide(kind) {
     const ph = item;
     ph.acc = ph.acc || (ph.origin === 'ending' && lastKept() ? lastKept().acc : null) || state.accDefault;
     if (state.forcePos != null) ph.jump = state.forcePos;
+    if (state.pendingProg) ph.progChange = state.pendingProg;
     state.shelf.push(ph);
     state.forcePos = null;
+    state.pendingProg = null;
     relayout();
     // 担当コードが変わるので、合わなくなった候補は作り直す（語尾違いを選んだら他の語尾違いは片付ける）
     state.deck = state.deck.filter((p) => fitsSlot(p) && !(ph.origin === 'ending' && p.origin === 'ending'));
@@ -422,9 +462,12 @@ function repeatLast() {
   if (!last) return;
   const copy = copyPhrase(last);
   delete copy.jump;
+  delete copy.progChange;
   if (state.forcePos != null) copy.jump = state.forcePos;
+  if (state.pendingProg) copy.progChange = state.pendingProg;
   state.shelf.push(copy);
   state.forcePos = null;
+  state.pendingProg = null;
   relayout();
   state.deck = state.deck.filter(fitsSlot);
   updateCounts();
@@ -521,6 +564,7 @@ function renderShelf() {
       if (k < 0) return;
       const copy = copyPhrase(ph);
       delete copy.jump;
+      delete copy.progChange;
       state.shelf.splice(k + 1, 0, copy);
       relayout();
       updateCounts();
@@ -530,6 +574,15 @@ function renderShelf() {
     };
     li.querySelector('canvas').onclick = () => at() >= 0 && playRow(at());
     li.querySelector('.accbtn').onclick = () => openPicker(ph);
+    // 進行が切り替わるフレーズには区切りの印
+    if (ph.progChange) {
+      li.classList.add('secstart');
+      const badge = document.createElement('button');
+      badge.className = 'secbadge';
+      badge.textContent = `▶ ${ph.progChange}`;
+      badge.onclick = () => openSecSheet(ph);
+      li.append(badge);
+    }
     // 小節数が分かるよう、短いフレーズは幅も短く
     const maxBars = Math.max(...state.shelf.map((p) => p.bars));
     li.querySelector('canvas').style.width = `${(ph.bars / maxBars) * 100}%`;
@@ -764,38 +817,111 @@ function syncSettingsForm() {
   refreshForm();
 }
 
-// 先頭コードを選ぶと、そこから続く4コード進行の一覧を出す
-let progStart = null;
-function renderProgList() {
-  const starts = START_DEGREES[draft.scale];
-  const first = draft.prog.split(/[\s\-–,|]+/)[0];
-  if (!progStart || !starts.includes(progStart)) progStart = starts.includes(first) ? first : starts[0];
-  const startEl = $('progStart');
+// 先頭コードを選ぶと、そこから続く4コード進行の一覧を出す（設定と区切りで共用）
+function fillProgPicker(startEl, listEl, { key, scale, current, start, onStart, onPick }) {
+  const starts = START_DEGREES[scale];
+  const first = (current || '').split(/[\s\-–,|]+/)[0];
+  if (!start || !starts.includes(start)) start = starts.includes(first) ? first : starts[0];
   startEl.innerHTML = '';
   for (const d of starts) {
     const b = document.createElement('button');
-    const c = parseProgression(d, draft.key, draft.scale)[0];
+    const c = parseProgression(d, key, scale)[0];
     b.innerHTML = `${d}<small>${c ? c.label : ''}</small>`;
-    b.classList.toggle('on', d === progStart);
-    b.onclick = () => {
-      progStart = d;
-      refreshForm();
-    };
+    b.classList.toggle('on', d === start);
+    b.onclick = () => onStart(d);
     startEl.append(b);
   }
-  const list = $('progList');
-  list.innerHTML = '';
-  for (const p of PROGRESSIONS[draft.scale][progStart] || []) {
+  listEl.innerHTML = '';
+  for (const p of PROGRESSIONS[scale][start] || []) {
     const b = document.createElement('button');
-    const names = parseProgression(p, draft.key, draft.scale).map((c) => c.label).join(' ');
+    const names = parseProgression(p, key, scale).map((c) => c.label).join(' ');
     b.innerHTML = `<b>${p}</b><span>${names}</span>${PROG_NAMES[p] ? `<em>${PROG_NAMES[p]}</em>` : ''}`;
-    b.classList.toggle('on', p === draft.prog);
-    b.onclick = () => {
+    b.classList.toggle('on', p === current);
+    b.onclick = () => onPick(p);
+    listEl.append(b);
+  }
+  return start;
+}
+
+let progStart = null;
+function renderProgList() {
+  progStart = fillProgPicker($('progStart'), $('progList'), {
+    key: draft.key,
+    scale: draft.scale,
+    current: draft.prog,
+    start: progStart,
+    onStart: (d) => {
+      progStart = d;
+      refreshForm();
+    },
+    onPick: (p) => {
       draft.prog = p;
       $('setProg').value = p;
       refreshForm();
-    };
-    list.append(b);
+    },
+  });
+}
+
+// ---------- 進行の区切り（曲の途中で進行を変える） ----------
+let secTarget = null; // null: 次のフレーズから / フレーズ: 棚の区切りを編集
+let secStartSel = null;
+function openSecSheet(target) {
+  secTarget = target;
+  secStartSel = null;
+  const k = target ? state.shelf.indexOf(target) + 1 : 0;
+  $('secTitle').textContent = target ? `棚の${k}番から使うコード進行` : 'ここから使うコード進行';
+  $('secHint').textContent = target
+    ? '選ぶとこのフレーズから新しい進行になり、後ろのフレーズのコードも付け直します'
+    : '次のフレーズから、選んだ進行の1つ目のコードで始めます（Aメロ→サビのような切り替え）';
+  $('btnSecRemove').classList.toggle('hidden', !target);
+  $('secProg').value = target ? target.progChange : nextProgText();
+  renderSecSheet();
+  $('secSheet').classList.add('open');
+  $('secSheet').setAttribute('aria-hidden', 'false');
+  $('secBackdrop').classList.remove('hidden');
+}
+
+function renderSecSheet() {
+  const { key, scale } = state.settings;
+  const current = secTarget ? secTarget.progChange : state.pendingProg;
+  secStartSel = fillProgPicker($('secStart'), $('secList'), {
+    key,
+    scale,
+    current,
+    start: secStartSel,
+    onStart: (d) => {
+      secStartSel = d;
+      renderSecSheet();
+    },
+    onPick: applySec,
+  });
+  const chords = parseProgression($('secProg').value, key, scale);
+  $('secPreview').classList.toggle('err', !chords.length);
+  $('secPreview').textContent = chords.length ? `${chords.length}コード: ${chords.map((c) => c.label).join(' → ')}` : '度数を読み取れません（例: IV-V-iii-vi）';
+}
+
+function closeSecSheet() {
+  $('secSheet').classList.remove('open');
+  $('secSheet').setAttribute('aria-hidden', 'true');
+  $('secBackdrop').classList.add('hidden');
+}
+
+function applySec(text) {
+  const t = secTarget;
+  closeSecSheet();
+  if (t) {
+    t.progChange = text;
+    relayout();
+    save();
+    renderShelf();
+    toast(`棚の${state.shelf.indexOf(t) + 1}番から ${text} に`);
+  } else {
+    state.pendingProg = text;
+    state.forcePos = null;
+    state.deck = state.deck.filter(fitsSlot);
+    save();
+    renderDeck();
+    toast(`次のフレーズから ${text} に切り替えます`);
   }
 }
 
@@ -942,6 +1068,24 @@ function init() {
   $('btnPlayCard').onclick = togglePlay;
   $('btnAccAll').onclick = () => applyAccToAll();
   $('btnPickClose').onclick = closePicker;
+  $('btnSecClose').onclick = closeSecSheet;
+  $('secBackdrop').onclick = closeSecSheet;
+  $('secProg').addEventListener('input', renderSecSheet);
+  $('btnSecCustom').onclick = () => {
+    const v = $('secProg').value.trim();
+    if (!parseProgression(v, state.settings.key, state.settings.scale).length) return;
+    applySec(v);
+  };
+  $('btnSecRemove').onclick = () => {
+    const t = secTarget;
+    closeSecSheet();
+    if (!t) return;
+    delete t.progChange;
+    relayout();
+    save();
+    renderShelf();
+    toast('区切りを消しました（前の進行が続きます）');
+  };
   $('pickBackdrop').onclick = closePicker;
   $('btnPickSwipe').onclick = () => {
     const ph = pickTarget;
