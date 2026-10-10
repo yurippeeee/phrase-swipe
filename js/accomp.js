@@ -37,7 +37,8 @@ export function accName(t) {
   if (!t) return '';
   const f = t.fit || 0;
   const fit = f < 0.15 ? '' : `・合いの手${Math.round(f * 100)}%`;
-  return (ACC_STYLES[t.style] || t.style) + (t.fill ? '＋フィル' : '') + fit;
+  const v = voiceName(t);
+  return (ACC_STYLES[t.style] || t.style) + (t.fill ? '＋フィル' : '') + (v ? `（${v}）` : '') + fit;
 }
 
 const ev = (s, d, v, inst = 'keys') => ({ s, d, v, inst });
@@ -203,8 +204,73 @@ export function accVariants(t, count = 5) {
   out.push({ ...t, id: newId(), reg: t.reg >= 52 ? t.reg - 4 : t.reg + 5 });
   const f = t.fit || 0;
   out.push({ ...t, id: newId(), fit: f >= 0.5 ? Math.max(0, f - 0.35) : Math.min(1, f + 0.35) });
-  while (out.length < count) out.push({ ...generateAcc(t.style, f), reg: t.reg });
+  out.push(...voiceVariants(t, 1));
+  while (out.length < count) out.push({ ...generateAcc(t.style, f), reg: t.reg, color: t.color, spread: t.spread });
   return out;
+}
+
+// ---- 響き（構成音）：リズムと鳴らす位置はそのままで、和音の中身だけ変える ----
+//   color: 足す・入れ替える音 / spread: 'close' 密集 / 'open' 1つおきに広げる
+export const VOICE_COLORS = {
+  plain: '',
+  seventh: '7th',
+  add9: 'add9',
+  sus4: 'sus4',
+  sus2: 'sus2',
+  six: '6th',
+  power: '3度抜き',
+};
+export function voiceName(t) {
+  const c = VOICE_COLORS[t.color || 'plain'];
+  const o = t.spread === 'open' ? '広げ' : '';
+  return [c, o].filter(Boolean).join('・');
+}
+
+// 響き違い：リズムはそのまま（合いの手の位置も同じ）で、構成音・広げ方を変えたもの
+export function voiceVariants(t, count = 5) {
+  const cur = `${t.color || 'plain'}|${t.spread || 'close'}`;
+  const all = [];
+  for (const color of Object.keys(VOICE_COLORS)) for (const spread of ['close', 'open']) if (`${color}|${spread}` !== cur) all.push({ color, spread });
+  const out = [];
+  while (out.length < count && all.length) {
+    // 同じ構成音ばかりにならないよう、まだ出ていない色を優先
+    const fresh = all.filter((v) => !out.some((o) => o.color === v.color));
+    const v = pick(fresh.length ? fresh : all);
+    all.splice(all.indexOf(v), 1);
+    out.push({ ...t, id: newId(), seed: t.seed || t.id, color: v.color, spread: v.spread });
+  }
+  return out;
+}
+
+// コードの構成音（ピッチクラス）を響きに合わせて変える。scale があればその音階の音を優先
+function colorPcs(chord, color, scale) {
+  const r = chord.rootPc;
+  const at = (iv) => (r + iv) % 12;
+  const inScale = (pc) => !scale || scale.includes(pc);
+  const pcs = [...chord.pcs];
+  const third = pcs.find((pc) => pc === at(3) || pc === at(4));
+  const triadOnly = pcs.length === 3 && pcs.includes(at(7));
+  switch (color) {
+    case 'seventh': {
+      if (pcs.length > 3) return pcs;
+      const m7 = at(10);
+      const M7 = at(11);
+      const sev = inScale(M7) && !inScale(m7) ? M7 : inScale(m7) ? m7 : third === at(4) ? M7 : m7;
+      return [...pcs, sev];
+    }
+    case 'add9':
+      return inScale(at(2)) ? [...pcs, at(2)] : pcs;
+    case 'six':
+      return inScale(at(9)) && triadOnly ? [...pcs, at(9)] : pcs;
+    case 'sus4':
+      return triadOnly && third != null && inScale(at(5)) ? pcs.map((pc) => (pc === third ? at(5) : pc)) : pcs;
+    case 'sus2':
+      return triadOnly && third != null && inScale(at(2)) ? pcs.map((pc) => (pc === third ? at(2) : pc)) : pcs;
+    case 'power':
+      return triadOnly ? pcs.filter((pc) => pc !== third) : pcs;
+    default:
+      return pcs;
+  }
 }
 
 // 同じ型・同じ小節・同じ位置なら毎回同じになる乱数（再生のたびに変わらないように）
@@ -228,7 +294,7 @@ function fitToMelody(t, bar, barIndex, melody) {
   // メロディの出だし直後（2ステップ）は「動いている」。伸ばしの後半と休みは「間」
   const busy = new Array(16).fill(false);
   for (const n of melody) for (let s = Math.max(0, n.s); s < Math.min(16, n.s + Math.min(n.d, 2)); s++) busy[s] = true;
-  const R = (...k) => hashRand(t.id, barIndex, ...k);
+  const R = (...k) => hashRand(t.seed || t.id, barIndex, ...k);
   const kept = bar.filter((e) => {
     if (e.inst !== 'keys' || e.s === 0 || !busy[e.s]) return true;
     return R('drop', e.s) >= (e.v.includes('C') ? f * 0.6 : f * 0.9);
@@ -260,8 +326,9 @@ function fitToMelody(t, bar, barIndex, melody) {
 }
 
 // コードに当てはめて音（{p,s,d,inst}）にする。melody を渡すと合いの手を合わせる
-// guitar: ギターの押さえ方（1小節1フォーム）の弦で鳴らす
-export function realizeBar(t, chord, barIndex, melody, guitar = false) {
+// guitar: ギターの押さえ方（1小節1フォーム）の弦で鳴らす（響きは押さえ方が決めるので使わない）
+// scale: キーの音階のピッチクラス（響きの音を選ぶため）
+export function realizeBar(t, chord, barIndex, melody, guitar = false, scale = null) {
   const bar = fitToMelody(t, t.bars[barIndex % t.bars.length], barIndex, melody);
   if (guitar) {
     const shape = guitarShape(chord);
@@ -280,10 +347,14 @@ export function realizeBar(t, chord, barIndex, melody, guitar = false) {
     return out;
   }
   const root = 40 + ((chord.rootPc - 4 + 12) % 12); // E2〜D#3（スマホでも聞こえる高さ）
-  // 段: reg 以上のコードトーンを下から順に
-  const ladder = [];
-  for (let p = t.reg; ladder.length < 7; p++) if (chord.pcs.includes(p % 12)) ladder.push(p);
-  const close = ladder.slice(0, chord.pcs.length);
+  // 段: reg 以上のコードトーンを下から順に（広げるときは1つおき）
+  const pcs = colorPcs(chord, t.color, scale);
+  const open = t.spread === 'open';
+  const all = [];
+  for (let p = t.reg; all.length < (open ? 14 : 7); p++) if (pcs.includes(p % 12)) all.push(p);
+  // 広げると上が高くなりすぎるので、G5 より上は1オクターブ下げる
+  const ladder = open ? all.filter((_, i) => i % 2 === 0).map((p) => { while (p > 79) p -= 12; return p; }) : all;
+  const close = ladder.slice(0, pcs.length);
   const out = [];
   for (const e of bar) {
     for (const v of e.v) {

@@ -1,5 +1,5 @@
-import { KEY_NAMES, parseProgression } from './theory.js';
-import { generateAcc, defaultAcc, DEFAULT_ACC_ID, accVariants, accName, realizeBar } from './accomp.js';
+import { KEY_NAMES, SCALES, parseProgression } from './theory.js';
+import { generateAcc, defaultAcc, DEFAULT_ACC_ID, accVariants, voiceVariants, accName, realizeBar } from './accomp.js';
 import { guitarShape } from './guitar.js';
 import { START_DEGREES, PROGRESSIONS, PROG_NAMES } from './progressions.js';
 import { generatePhrase, makeVariants, chordVariants, copyPhrase, endingVariants, transposePhrase, originLabel, STEPS_PER_BAR } from './generator.js';
@@ -156,6 +156,8 @@ function buildSeq(phrases, withAcc, accOverride) {
   const acc = [];
   const ranges = [];
   let off = 0;
+  const { key, scale } = state.settings;
+  const scalePcs = (SCALES[scale] || SCALES.major).map((x) => (x + key) % 12);
   for (const ph of phrases) {
     for (const n of ph.notes) notes.push({ p: n.p, s: n.s + off, d: n.d });
     const t = accOverride || accOf(ph);
@@ -163,7 +165,7 @@ function buildSeq(phrases, withAcc, accOverride) {
       const c = ph.chords[b % ph.chords.length];
       // この小節で鳴っているメロディ（合いの手を合わせるため）
       const mel = ph.notes.filter((n) => n.s < (b + 1) * STEPS_PER_BAR && n.s + n.d > b * STEPS_PER_BAR).map((n) => ({ s: n.s - b * STEPS_PER_BAR, d: n.d }));
-      if (c) for (const a of realizeBar(t, c, b, mel, !!state.settings.guitarAcc)) acc.push({ ...a, s: a.s + off + b * STEPS_PER_BAR });
+      if (c) for (const a of realizeBar(t, c, b, mel, !!state.settings.guitarAcc, scalePcs)) acc.push({ ...a, s: a.s + off + b * STEPS_PER_BAR });
     }
     ranges.push([off, off + ph.bars * STEPS_PER_BAR]);
     off += ph.bars * STEPS_PER_BAR;
@@ -239,6 +241,7 @@ function setMode(mode) {
   $('tglContext').classList.toggle('hidden', mode === 'acc');
   $('btnAccAll').classList.toggle('hidden', mode !== 'acc');
   $('fitBar').classList.toggle('hidden', mode !== 'acc');
+  $('voiceBar').classList.toggle('hidden', mode !== 'acc');
   updateAccLabels();
   if (!$('viewSwipe').classList.contains('hidden')) renderDeck();
 }
@@ -581,6 +584,16 @@ function similar() {
   curDeck().splice(1, 0, ...vars);
   renderBack();
   toast(`近い候補を${vars.length}つ追加`);
+}
+
+// 伴奏：リズムと鳴らす位置はそのままで、構成音（7th・sus4 など）や広げ方を変えた候補
+function voicings() {
+  const item = curDeck()[0];
+  if (!item || deciding || state.mode !== 'acc') return;
+  const vars = voiceVariants(item, 5);
+  curDeck().splice(1, 0, ...vars);
+  renderBack();
+  toast(state.settings.guitarAcc ? `構成音違いを${vars.length}つ追加（ギター向けの間は押さえ方どおりの音）` : `構成音違いを${vars.length}つ追加`);
 }
 
 function togglePlay() {
@@ -1217,6 +1230,7 @@ function init() {
   $('btnKeep').onclick = () => decide('keep');
   $('btnNope').onclick = () => decide('nope');
   $('btnSimilar').onclick = similar;
+  $('btnVoice').onclick = voicings;
   $('btnRepeat').onclick = repeatLast;
   $('btnEnding').onclick = endingsOfLast;
   $('btnPlayCard').onclick = togglePlay;
