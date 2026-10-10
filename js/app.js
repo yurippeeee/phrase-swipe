@@ -1,5 +1,5 @@
 import { KEY_NAMES, SCALES, parseProgression } from './theory.js';
-import { generateAcc, defaultAcc, DEFAULT_ACC_ID, accVariants, voiceVariants, accName, realizeBar } from './accomp.js';
+import { generateAcc, defaultAcc, DEFAULT_ACC_ID, accVariants, voiceVariants, voicedLabel, accName, realizeBar } from './accomp.js';
 import { guitarShape } from './guitar.js';
 import { START_DEGREES, PROGRESSIONS, PROG_NAMES } from './progressions.js';
 import { generatePhrase, makeVariants, chordVariants, copyPhrase, endingVariants, transposePhrase, originLabel, STEPS_PER_BAR } from './generator.js';
@@ -150,14 +150,24 @@ function fillDeck() {
 // ---------- 再生用シーケンス ----------
 const accOf = (ph) => ph.acc || state.accDefault;
 
+const keyScalePcs = () => (SCALES[state.settings.scale] || SCALES.major).map((x) => (x + state.settings.key) % 12);
+// 伴奏の響き（構成音アレンジ）を付けたコード名。ギター向けの間は押さえ方の音なので元の名前
+function accLabels(ph, t) {
+  if (state.settings.guitarAcc) return undefined;
+  const sc = keyScalePcs();
+  return Array.from({ length: ph.bars }, (_, b) => {
+    const c = ph.chords[b % ph.chords.length];
+    return c ? voicedLabel(t, c, sc) : '';
+  });
+}
+
 // accOverride: 伴奏の候補を試すときに、フレーズの伴奏の代わりに使う型
 function buildSeq(phrases, withAcc, accOverride) {
   const notes = [];
   const acc = [];
   const ranges = [];
   let off = 0;
-  const { key, scale } = state.settings;
-  const scalePcs = (SCALES[scale] || SCALES.major).map((x) => (x + key) % 12);
+  const scalePcs = keyScalePcs();
   for (const ph of phrases) {
     for (const n of ph.notes) notes.push({ p: n.p, s: n.s + off, d: n.d });
     const t = accOverride || accOf(ph);
@@ -302,7 +312,7 @@ function accCardEl(t, behind) {
   el.querySelector('.num').textContent = accSpecific() ? `棚の${k + 1}番だけ` : '曲全体';
   el._acc = t;
   el._phrase = target;
-  el._segs = [{ phrase: target, acc: buildSeq([target], true, t).acc, accFocus: true }];
+  el._segs = [{ phrase: target, acc: buildSeq([target], true, t).acc, accFocus: true, labels: accLabels(target, t) }];
   return el;
 }
 
@@ -593,7 +603,7 @@ function voicings() {
   const vars = voiceVariants(item, 5);
   curDeck().splice(1, 0, ...vars);
   renderBack();
-  toast(state.settings.guitarAcc ? `構成音違いを${vars.length}つ追加（ギター向けの間は押さえ方どおりの音）` : `構成音違いを${vars.length}つ追加`);
+  toast(state.settings.guitarAcc ? `コードごとに構成音を変えた候補を${vars.length}つ追加（ギター向けの間は押さえ方どおりの音）` : `コードごとに構成音を変えた候補を${vars.length}つ追加`);
 }
 
 function togglePlay() {
@@ -1247,7 +1257,7 @@ function init() {
     if (state.mode !== 'acc' || !t || !top || !top._acc) return;
     t.fit = state.accFit;
     top.querySelector('.tag').textContent = accName(t);
-    top._segs = [{ phrase: top._phrase, acc: buildSeq([top._phrase], true, t).acc, accFocus: true }];
+    top._segs = [{ phrase: top._phrase, acc: buildSeq([top._phrase], true, t).acc, accFocus: true, labels: accLabels(top._phrase, t) }];
   });
   $('fitRange').addEventListener('change', () => {
     save();

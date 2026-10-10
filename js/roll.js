@@ -13,7 +13,7 @@ function colors() {
   return palette;
 }
 
-// segments: [{ phrase, faded, acc:[{p,s,d,inst}], accFocus }] を左から並べて描画
+// segments: [{ phrase, faded, acc:[{p,s,d,inst}], accFocus, labels(小節ごとのコード名・任意) }] を左から並べて描画
 // accFocus: 伴奏を主役に描く（メロディは薄く）
 // opts: { playStep, labels(コード名表示) }
 export function drawRoll(canvas, segments, opts = {}) {
@@ -94,7 +94,7 @@ export function drawRoll(canvas, segments, opts = {}) {
       for (let b = 0; b < ph.bars; b++) {
         const c = ph.chords[b % ph.chords.length];
         g.fillStyle = seg.faded ? C.muted : C.chord;
-        g.fillText(c ? c.label : '', (x0 + b * 16) * stepW + 5, labelH / 2 + 1);
+        g.fillText(seg.labels ? seg.labels[b] : c ? c.label : '', (x0 + b * 16) * stepW + 5, labelH / 2 + 1);
       }
     }
     // 伴奏

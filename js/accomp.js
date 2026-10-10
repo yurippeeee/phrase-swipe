@@ -221,23 +221,65 @@ export const VOICE_COLORS = {
   power: '3度抜き',
 };
 export function voiceName(t) {
-  const c = VOICE_COLORS[t.color || 'plain'];
+  const c = t.color === 'mix' ? '構成音アレンジ' : VOICE_COLORS[t.color || 'plain'];
   const o = t.spread === 'open' ? '広げ' : '';
   return [c, o].filter(Boolean).join('・');
 }
 
-// 響き違い：リズムはそのまま（合いの手の位置も同じ）で、構成音・広げ方を変えたもの
+// コードごとに構成音を変える（mix）。同じコードはいつも同じ響き、違うコードには違う響き
+//   コードの役割で候補を絞る：ドミナント(V)は 7th・sus4、メジャーは M7・add9・6th・sus2、マイナーは m7・add9・sus4
+const MIX_CANDIDATES = {
+  dom: ['seventh', 'sus4'],
+  maj: ['seventh', 'add9', 'six', 'sus2'],
+  min: ['seventh', 'add9', 'plain'],
+  other: ['seventh', 'plain'],
+};
+function colorFor(t, chord, scale) {
+  if (t.color !== 'mix') return t.color;
+  const r = chord.rootPc;
+  const has = (iv) => chord.pcs.includes((r + iv) % 12);
+  const tonic = scale ? scale[0] : null;
+  const kind = !has(7) ? 'other' : tonic != null && r === (tonic + 7) % 12 && has(4) ? 'dom' : has(4) ? 'maj' : has(3) ? 'min' : 'other';
+  const list = MIX_CANDIDATES[kind];
+  // 種（vseed）とキーの主音からの距離で決める：同じ度数はいつも同じ響き、度数ごとにばらばら
+  // 度数の順に候補を1つずつずらして割り当てるので、同じ種類のコードが並んでも同じ響きになりにくい
+  // （長調の I・IV／ii・iii・vi、短調の i・iv・v／III・VI・VII がそれぞれ別の響きになる並び）
+  const DEG_RANK = [0, 1, 2, 1, 2, 0, 3];
+  const deg = scale && scale.includes(r) ? DEG_RANK[scale.indexOf(r)] : r;
+  const base = Math.floor(hashRand(t.vseed || t.id, 'mix', kind) * list.length);
+  return list[(base + deg) % list.length];
+}
+
+// 響きを付けたコード名（カードの表示用）
+export function voicedLabel(t, chord, scale) {
+  const pcs = colorPcs(chord, colorFor(t, chord, scale), scale);
+  if (pcs.join() === chord.pcs.join()) return chord.label;
+  const r = chord.rootPc;
+  const has = (iv) => pcs.includes((r + iv) % 12);
+  const root = chord.label.match(/^[A-G][#b]?/)[0];
+  if (!has(3) && !has(4)) return root + (has(5) ? 'sus4' : has(2) ? 'sus2' : '5');
+  const base = chord.label;
+  if (pcs.length > chord.pcs.length) {
+    if (has(9) && !chord.pcs.includes((r + 9) % 12)) return base + '6';
+    if (has(2)) return base + 'add9';
+    if (has(11)) return base + 'M7';
+    if (has(10)) return has(6) ? root + 'm7-5' : base + '7';
+  }
+  return base;
+}
+
+// 構成音違い：リズムはそのまま（合いの手の位置も同じ）で、コードごとに構成音を変えたもの
 export function voiceVariants(t, count = 5) {
-  const cur = `${t.color || 'plain'}|${t.spread || 'close'}`;
-  const all = [];
-  for (const color of Object.keys(VOICE_COLORS)) for (const spread of ['close', 'open']) if (`${color}|${spread}` !== cur) all.push({ color, spread });
+  // 割り当て（種類ごとの開始位置）と広げ方が同じ候補は出さない
+  const sig = (v) => (v.color === 'mix' ? Object.keys(MIX_CANDIDATES).map((k) => Math.floor(hashRand(v.vseed || v.id, 'mix', k) * MIX_CANDIDATES[k].length)).join('') : v.color || 'plain') + (v.spread || 'close');
+  const seen = new Set([sig(t)]);
   const out = [];
-  while (out.length < count && all.length) {
-    // 同じ構成音ばかりにならないよう、まだ出ていない色を優先
-    const fresh = all.filter((v) => !out.some((o) => o.color === v.color));
-    const v = pick(fresh.length ? fresh : all);
-    all.splice(all.indexOf(v), 1);
-    out.push({ ...t, id: newId(), seed: t.seed || t.id, color: v.color, spread: v.spread });
+  for (let i = 0; out.length < count && i < 200; i++) {
+    const spread = out.length < 3 ? t.spread || 'close' : pick(['close', 'open']);
+    const v = { ...t, id: newId(), seed: t.seed || t.id, color: 'mix', vseed: newId() + i, spread };
+    if (seen.has(sig(v))) continue;
+    seen.add(sig(v));
+    out.push(v);
   }
   return out;
 }
@@ -348,7 +390,7 @@ export function realizeBar(t, chord, barIndex, melody, guitar = false, scale = n
   }
   const root = 40 + ((chord.rootPc - 4 + 12) % 12); // E2〜D#3（スマホでも聞こえる高さ）
   // 段: reg 以上のコードトーンを下から順に（広げるときは1つおき）
-  const pcs = colorPcs(chord, t.color, scale);
+  const pcs = colorPcs(chord, colorFor(t, chord, scale), scale);
   const open = t.spread === 'open';
   const all = [];
   for (let p = t.reg; all.length < (open ? 14 : 7); p++) if (pcs.includes(p % 12)) all.push(p);
