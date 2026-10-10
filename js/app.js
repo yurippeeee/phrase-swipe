@@ -882,10 +882,52 @@ function exportMidi() {
       { name: 'Bass', program: 33, notes: seq.allAcc.filter((a) => a.inst === 'bass'), vel: 90 },
     ],
   });
-  const d = new Date();
-  const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
-  downloadMidi(bytes, `phrase-swipe-${stamp}.mid`);
+  downloadMidi(bytes, `phrase-swipe-${fileStamp()}.mid`);
   toast('MIDIを書き出しました');
+}
+
+function fileStamp() {
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}`;
+}
+
+// ギターコード サポート（guiter_support）用：棚の曲をメロディと伴奏を分けて実音のまま書き出す。
+// 押さえ方・弦への割り当て・8分への丸めは読み込む側で行う
+function exportForGuitar() {
+  if (!state.shelf.length) {
+    toast('棚が空です');
+    return;
+  }
+  const seq = buildSeq(state.shelf, true);
+  const bars = [];
+  for (const ph of state.shelf) for (let b = 0; b < ph.bars; b++) {
+    const c = ph.chords[b % ph.chords.length];
+    bars.push({ rootPc: c.rootPc, pcs: c.pcs, label: c.label });
+  }
+  const { key, scale, bpm } = state.settings;
+  const data = {
+    app: 'phrase-swipe',
+    version: 1,
+    exported: new Date().toISOString(),
+    name: `Phrase Swipe ${fileStamp()}`,
+    key,
+    scale,
+    bpm,
+    stepsPerBar: STEPS_PER_BAR, // s・d は16分音符単位
+    bars,
+    melody: seq.notes.map(({ p, s, d }) => ({ p, s, d })),
+    accomp: seq.allAcc.map(({ p, s, d, inst }) => ({ p, s, d, inst })),
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `phrase-swipe-guitar-${fileStamp()}.json`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('ギター用に書き出しました（ギターコード サポートでインポート）');
 }
 
 // ---------- 設定 ----------
@@ -1234,6 +1276,7 @@ function init() {
   };
   $('btnPlaySong').onclick = () => (songPlaying ? stopSong() : playSong());
   $('btnMidi').onclick = exportMidi;
+  $('btnGuitar').onclick = exportForGuitar;
   $('btnClear').onclick = () => {
     if (!state.shelf.length || !confirm('キープ棚を全部消しますか？')) return;
     state.shelf = [];
