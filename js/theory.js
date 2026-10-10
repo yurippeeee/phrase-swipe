@@ -69,3 +69,45 @@ export function voiceChord(chord) {
   const notes = chord.pcs.map((pc) => root + ((pc - chord.rootPc + 12) % 12));
   return [root - 12, ...notes];
 }
+
+// 構成音からコード名を作る（決まった形でなくても、テンション・omit・分数コードで表す）
+// rootName: ルートの表記（コード名から取る）, pcs: 構成音, bassPc: 最低音
+const TENSION = { 1: 'b9', 2: '9', 3: '#9', 5: '11', 6: '#11', 8: 'b13', 9: '13' };
+export function chordName(rootName, rootPc, pcs, bassPc = rootPc) {
+  const rest = new Set(pcs.map((pc) => (pc - rootPc + 12) % 12));
+  rest.delete(0);
+  const third = rest.has(4) ? 'M' : rest.has(3) ? 'm' : null;
+  if (third === 'M') rest.delete(4);
+  if (third === 'm') rest.delete(3);
+  let q = third === 'm' ? 'm' : '';
+  let sev = '';
+  let six = '';
+  let sus = '';
+  let omit = '';
+  if (rest.has(7)) rest.delete(7);
+  else if (third === 'm' && rest.has(6)) {
+    rest.delete(6);
+    if (rest.has(10)) {
+      rest.delete(10);
+      q = 'm7-5';
+    } else q = 'dim';
+  } else if (third === 'M' && rest.has(8)) {
+    rest.delete(8);
+    q = 'aug';
+  }
+  if (!third) {
+    if (rest.has(5)) (sus = 'sus4'), rest.delete(5);
+    else if (rest.has(2)) (sus = 'sus2'), rest.delete(2);
+  }
+  if (q !== 'm7-5') {
+    if (rest.has(10)) (sev = '7'), rest.delete(10);
+    else if (rest.has(11)) (sev = 'M7'), rest.delete(11);
+  }
+  if (!sev && rest.has(9)) (six = '6'), rest.delete(9);
+  if (!third && !sus) omit = rest.size || sev || six ? '(omit3)' : '5';
+  const ts = [...rest].sort((a, b) => +(TENSION[a] || a).replace(/\D/g, '') - +(TENSION[b] || b).replace(/\D/g, '')).map((x) => TENSION[x] || String(x));
+  let tens = '';
+  if (ts.length) tens = sev ? `(${ts.join(',')})` : ts.length === 1 && !sus && !six ? `add${ts[0]}` : `(add${ts.join(',')})`;
+  const slash = bassPc !== rootPc ? '/' + KEY_NAMES[bassPc] : '';
+  return rootName + q + six + sev + sus + tens + omit + slash;
+}

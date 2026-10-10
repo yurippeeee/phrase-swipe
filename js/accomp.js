@@ -4,7 +4,8 @@
 //   記号: 'R' ベースの根音 / 'F' ベースの5度 / 'O' ベースの1オクターブ上 / 'C' 和音（密集配置）/ 数字 コードトーンの段（0=下から）
 //   inst: 'pad' 持続する和音 / 'keys' 鍵盤 / 'bass' ベース
 
-import { guitarShape, guitarNotes } from './guitar.js';
+import { guitarShape, guitarVoicingShape, guitarNotes } from './guitar.js';
+import { chordName } from './theory.js';
 
 const rand = Math.random;
 const pick = (arr) => arr[Math.floor(rand() * arr.length)];
@@ -226,46 +227,87 @@ export function voiceName(t) {
   return [c, o].filter(Boolean).join('・');
 }
 
-// コードごとに構成音を変える（mix）。同じコードはいつも同じ響き、違うコードには違う響き
-//   コードの役割で候補を絞る：ドミナント(V)は 7th・sus4、メジャーは M7・add9・6th・sus2、マイナーは m7・add9・sus4
-const MIX_CANDIDATES = {
-  dom: ['seventh', 'sus4'],
-  maj: ['seventh', 'add9', 'six', 'sus2'],
-  min: ['seventh', 'add9', 'sus4'],
-  other: ['seventh', 'plain'],
-};
-function colorFor(t, chord, scale) {
-  if (t.color !== 'mix') return t.color;
+// コードごとに構成音を変える（mix）：音階の音から自由にテンションを足す・3度を sus にする・7th を足す・5度を抜く・転回する。
+// 決まった名前の形に限らない。同じコードはいつも同じ響き（種 vseed とコードで決まる）
+function mixVoicing(t, chord, scale) {
   const r = chord.rootPc;
-  const has = (iv) => chord.pcs.includes((r + iv) % 12);
-  const tonic = scale ? scale[0] : null;
-  const kind = !has(7) ? 'other' : tonic != null && r === (tonic + 7) % 12 && has(4) ? 'dom' : has(4) ? 'maj' : has(3) ? 'min' : 'other';
-  const list = MIX_CANDIDATES[kind];
-  // 種（vseed）とキーの主音からの距離で決める：同じ度数はいつも同じ響き、度数ごとにばらばら
-  // 度数の順に候補を1つずつずらして割り当てるので、同じ種類のコードが並んでも同じ響きになりにくい
-  // （長調の I・IV／ii・iii・vi、短調の i・iv・v／III・VI・VII がそれぞれ別の響きになる並び）
-  const DEG_RANK = [0, 1, 2, 1, 2, 0, 3];
-  const deg = scale && scale.includes(r) ? DEG_RANK[scale.indexOf(r)] : r;
-  const base = Math.floor(hashRand(t.vseed || t.id, 'mix', kind) * list.length);
-  return list[(base + deg) % list.length];
+  const key = `${r}|${chord.pcs.join(',')}`;
+  const R = (k) => hashRand(t.vseed || t.id, 'mix2', key, k);
+  const at = (iv) => (r + iv) % 12;
+  let pcs = [...chord.pcs];
+  const pool = (scale || [...Array(12).keys()]).filter((pc) => !pcs.includes(pc));
+  // ぶつかる音（今の音の半音上）は足さない。足した音どうしも半音でぶつけない
+  const third0 = chord.pcs.find((pc) => pc === at(3) || pc === at(4));
+  const ok = (pc, cur) =>
+    !cur.some((x) => (pc - x + 12) % 12 === 1 || ((x - pc + 12) % 12 === 1 && !chord.pcs.includes(x))) &&
+    !(third0 != null && cur.includes(third0) && Math.min((pc - third0 + 12) % 12, (third0 - pc + 12) % 12) === 1); // 3度と半音でぶつけない
+  const addSome = (n, salt) => {
+    const cand = pool.filter((pc) => !pcs.includes(pc));
+    for (let i = 0; i < n && cand.length; i++) {
+      const okc = cand.filter((pc) => ok(pc, pcs));
+      if (!okc.length) break;
+      const pc = okc[Math.floor(R(salt + i) * okc.length)];
+      pcs.push(pc);
+      cand.splice(cand.indexOf(pc), 1);
+    }
+  };
+  const third = pcs.find((pc) => pc === at(3) || pc === at(4));
+  const fifth = pcs.includes(at(7)) ? at(7) : null;
+  const op = R('op');
+  if (op < 0.28) addSome(1, 'a');
+  else if (op < 0.5) addSome(2, 'b');
+  else if (op < 0.66 && third != null) {
+    // sus：3度を2度か4度に
+    const subs = [at(2), at(5)].filter((pc) => !scale || scale.includes(pc));
+    if (subs.length) pcs = pcs.map((pc) => (pc === third ? subs[Math.floor(R('sus') * subs.length)] : pc));
+    if (R('sus+') < 0.5) addSome(1, 'c');
+  } else if (op < 0.8) {
+    // 7th ＋ テンション
+    const sev = [at(10), at(11)].filter((pc) => (!scale || scale.includes(pc)) && !pcs.includes(pc));
+    if (sev.length && !pcs.some((pc) => pc === at(10) || pc === at(11))) pcs.push(sev[0]);
+    addSome(R('7n') < 0.5 ? 1 : 0, 'd');
+  } else if (op < 0.9 && fifth != null) {
+    // 5度を抜いてテンションで隙間を作る
+    pcs = pcs.filter((pc) => pc !== fifth);
+    addSome(R('o5') < 0.5 ? 1 : 2, 'e');
+  }
+  // 転回（ベースを根音以外に）
+  let bass = r;
+  const invFor = op >= 0.9 || R('inv') < 0.25;
+  if (invFor) {
+    const others = pcs.filter((pc) => pc !== r);
+    if (others.length) bass = others[Math.floor(R('bass') * others.length)];
+  }
+  // 何も変わらなかったら1音足す
+  if (bass === r && pcs.length === chord.pcs.length && pcs.every((pc) => chord.pcs.includes(pc))) addSome(1, 'z');
+  return { pcs, bass };
+}
+
+// 伴奏の型 t がこのコードで鳴らす構成音とベース、コード名
+// guitar: ギターの押さえ方も探す（見つからなければ転回をやめる→元のコード）
+export function accVoicing(t, chord, scale, guitar = false) {
+  let v;
+  if (t.color === 'mix') v = mixVoicing(t, chord, scale);
+  else v = { pcs: colorPcs(chord, t.color, scale), bass: chord.rootPc };
+  const rootName = chord.label.match(/^[A-G][#b]?/)[0];
+  const make = (x) => {
+    const plain = x.bass === chord.rootPc && x.pcs.length === chord.pcs.length && x.pcs.every((pc) => chord.pcs.includes(pc));
+    return { ...x, plain, label: plain ? chord.label : chordName(rootName, chord.rootPc, x.pcs, x.bass) };
+  };
+  let vc = make(v);
+  if (!guitar) return vc;
+  for (const cand of [vc, make({ ...v, bass: chord.rootPc })]) {
+    if (cand.plain) break;
+    const shape = guitarVoicingShape(cand, chord);
+    if (shape) return { ...cand, shape };
+  }
+  vc = make({ pcs: [...chord.pcs], bass: chord.rootPc });
+  return { ...vc, shape: guitarShape(chord) };
 }
 
 // 響きを付けたコード名（カードの表示用）
-export function voicedLabel(t, chord, scale) {
-  const pcs = colorPcs(chord, colorFor(t, chord, scale), scale);
-  if (pcs.join() === chord.pcs.join()) return chord.label;
-  const r = chord.rootPc;
-  const has = (iv) => pcs.includes((r + iv) % 12);
-  const root = chord.label.match(/^[A-G][#b]?/)[0];
-  if (!has(3) && !has(4)) return root + (has(5) ? 'sus4' : has(2) ? 'sus2' : '5');
-  const base = chord.label;
-  if (pcs.length > chord.pcs.length) {
-    if (has(9) && !chord.pcs.includes((r + 9) % 12)) return base + '6';
-    if (has(2)) return base + 'add9';
-    if (has(11)) return base + 'M7';
-    if (has(10)) return has(6) ? root + 'm7-5' : base + '7';
-  }
-  return base;
+export function voicedLabel(t, chord, scale, guitar = false) {
+  return accVoicing(t, chord, scale, guitar).label;
 }
 
 // 構成音違い：リズムはそのまま（合いの手の位置も同じ）で、コードごとに構成音を変えたもの
@@ -274,9 +316,9 @@ export function voiceVariants(t, count = 5, avoid = [], ctx = null) {
   // 割り当てと広げ方が同じ候補は出さない
   const sig = (v) =>
     (ctx && ctx.chords.length
-      ? ctx.chords.map((c) => colorFor(v, c, ctx.scale)).join()
+      ? ctx.chords.map((c) => voicedLabel(v, c, ctx.scale, ctx.guitar)).join()
       : v.color === 'mix'
-        ? Object.keys(MIX_CANDIDATES).map((k) => Math.floor(hashRand(v.vseed || v.id, 'mix', k) * MIX_CANDIDATES[k].length)).join('')
+        ? v.vseed
         : v.color || 'plain') + (v.spread || 'close');
   const seen = new Set([t, ...avoid].map(sig));
   const out = [];
@@ -378,8 +420,9 @@ function fitToMelody(t, bar, barIndex, melody) {
 // scale: キーの音階のピッチクラス（響きの音を選ぶため）
 export function realizeBar(t, chord, barIndex, melody, guitar = false, scale = null) {
   const bar = fitToMelody(t, t.bars[barIndex % t.bars.length], barIndex, melody);
+  const vc = accVoicing(t, chord, scale, guitar);
   if (guitar) {
-    const shape = guitarShape(chord);
+    const shape = vc.shape;
     const out = [];
     const seen = new Set();
     for (const e of bar) {
@@ -394,9 +437,10 @@ export function realizeBar(t, chord, barIndex, melody, guitar = false, scale = n
     }
     return out;
   }
-  const root = 40 + ((chord.rootPc - 4 + 12) % 12); // E2〜D#3（スマホでも聞こえる高さ）
+  const root = 40 + ((vc.bass - 4 + 12) % 12); // E2〜D#3（スマホでも聞こえる高さ）。転回したらその音
+  const fifthUp = vc.bass === chord.rootPc ? root + 7 : root + ((chord.rootPc - vc.bass + 12) % 12); // 転回のときは根音
   // 段: reg 以上のコードトーンを下から順に（広げるときは1つおき）
-  const pcs = colorPcs(chord, colorFor(t, chord, scale), scale);
+  const pcs = vc.pcs;
   const open = t.spread === 'open';
   const all = [];
   for (let p = t.reg; all.length < (open ? 14 : 7); p++) if (pcs.includes(p % 12)) all.push(p);
@@ -419,7 +463,7 @@ export function realizeBar(t, chord, barIndex, melody, guitar = false, scale = n
     for (const v of e.v) {
       let ps;
       if (v === 'R') ps = [root];
-      else if (v === 'F') ps = [root + 7];
+      else if (v === 'F') ps = [fifthUp];
       else if (v === 'O') ps = [root + 12];
       else if (v === 'C') ps = close;
       else ps = [ladder[Math.min(v, ladder.length - 1)]];

@@ -103,3 +103,92 @@ export function guitarNotes(shape, v, inst) {
   const k = Math.max(0, Math.min(above.length - 1, Number(v)));
   return [above[k] || bassStr];
 }
+
+// 構成音とベースから押さえ方を探す（名前の決まった形でなくても）
+//   4フレットの範囲・中の弦はミュートしない（低音側と1弦だけ休ませてよい）
+//   複数の弦をまとめて押さえるのは人差し指（セーハ）だけ、指は4本まで
+const shapeCache = new Map();
+export function guitarVoicingShape(vc, chord) {
+  const key = `${vc.pcs.slice().sort((a, b) => a - b).join(',')}|${vc.bass}|${chord.rootPc}`;
+  if (shapeCache.has(key)) return shapeCache.get(key);
+  const pcs = new Set(vc.pcs);
+  const fifth = (chord.rootPc + 7) % 12;
+  // 4音以上で根音がベースなら5度は省いてよい（転回形で省くと別のコードに聞こえる）
+  const need = [...pcs].filter((pc) => !(pc === fifth && pcs.size >= 4 && vc.bass === chord.rootPc));
+  let best = null;
+  for (let b = 0; b <= 9; b++) {
+    const lo = Math.max(1, b);
+    const hi = lo + 3;
+    const opts = OPEN_MIDI.map((m) => {
+      const o = [-1];
+      if (b === 0 && pcs.has(m % 12)) o.push(0);
+      for (let f = lo; f <= hi; f++) if (pcs.has((m + f) % 12)) o.push(f);
+      return o;
+    });
+    const f = new Array(6);
+    const visit = (s) => {
+      if (s < 6) {
+        for (const x of opts[s]) {
+          f[s] = x;
+          visit(s + 1);
+        }
+        return;
+      }
+      const score = rate(f, pcs, need, vc.bass);
+      if (score != null && (!best || score < best.score)) best = { score, f: [...f] };
+    };
+    visit(0);
+  }
+  let shape = null;
+  if (best) {
+    const strings = stringsOf(best.f);
+    const fretted = best.f.filter((x) => x > 0);
+    const minF = fretted.length ? Math.min(...fretted) : 0;
+    const pos = best.f.some((x) => x === 0) && Math.max(0, ...fretted) <= 4 ? 'オープン' : `${minF}f`;
+    shape = { name: `${vc.label}（${pos}）`, strings, bass: strings[0].s, base: minF };
+  }
+  shapeCache.set(key, shape);
+  return shape;
+}
+
+function rate(f, pcs, need, bassPc) {
+  const first = f.findIndex((x) => x >= 0);
+  if (first < 0) return null;
+  // 中の弦のミュートは不可（1弦だけは休ませてよい）
+  let top = 5;
+  if (f[5] < 0) top = 4;
+  for (let s = first; s <= top; s++) if (f[s] < 0) return null;
+  const sounding = top - first + 1;
+  if (sounding < 4) return null;
+  if ((OPEN_MIDI[first] + f[first]) % 12 !== bassPc) return null;
+  const got = new Set();
+  const count = new Map();
+  for (let s = first; s <= top; s++) {
+    const pc = (OPEN_MIDI[s] + f[s]) % 12;
+    got.add(pc);
+    count.set(pc, (count.get(pc) || 0) + 1);
+  }
+  if (!need.every((pc) => got.has(pc))) return null;
+  const fretted = [];
+  for (let s = first; s <= top; s++) if (f[s] > 0) fretted.push(s);
+  let fingers = 0;
+  let barre = false;
+  if (fretted.length) {
+    const minF = Math.min(...fretted.map((s) => f[s]));
+    const maxF = Math.max(...fretted.map((s) => f[s]));
+    if (maxF - minF > 3) return null;
+    const atMin = fretted.filter((s) => f[s] === minF);
+    if (atMin.length >= 2) {
+      // セーハ：一番低い押さえ弦から上に開放弦があると押さえられない
+      for (let s = atMin[0]; s <= top; s++) if (f[s] === 0) return null;
+      barre = true;
+      fingers = 1 + fretted.length - atMin.length;
+    } else fingers = fretted.length;
+    if (fingers > 4) return null;
+  }
+  const opens = f.filter((x, s) => s >= first && s <= top && x === 0).length;
+  const minF = fretted.length ? Math.min(...fretted.map((s) => f[s])) : 0;
+  let dup = 0;
+  for (const [, n] of count) if (n > 2) dup += n - 2;
+  return minF * 0.5 + (6 - sounding) * 0.7 - opens * 0.3 + (barre ? 0.8 : 0) + dup * 0.6 + (f[5] < 0 ? 0.4 : 0) + first * 0.2;
+}

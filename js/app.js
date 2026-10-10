@@ -1,5 +1,5 @@
 import { KEY_NAMES, SCALES, parseProgression } from './theory.js';
-import { generateAcc, defaultAcc, DEFAULT_ACC_ID, accVariants, voiceVariants, voicedLabel, accName, realizeBar } from './accomp.js';
+import { generateAcc, defaultAcc, DEFAULT_ACC_ID, accVariants, voiceVariants, voicedLabel, accVoicing, accName, realizeBar } from './accomp.js';
 import { guitarShape } from './guitar.js';
 import { START_DEGREES, PROGRESSIONS, PROG_NAMES } from './progressions.js';
 import { generatePhrase, makeVariants, chordVariants, copyPhrase, endingVariants, transposePhrase, originLabel, STEPS_PER_BAR } from './generator.js';
@@ -154,11 +154,10 @@ const accOf = (ph) => ph.acc || state.accDefault;
 const keyScalePcs = () => (SCALES[state.settings.scale] || SCALES.major).map((x) => (x + state.settings.key) % 12);
 // 伴奏の響き（構成音アレンジ）を付けたコード名。ギター向けの間は押さえ方の音なので元の名前
 function accLabels(ph, t) {
-  if (state.settings.guitarAcc) return undefined;
   const sc = keyScalePcs();
   return Array.from({ length: ph.bars }, (_, b) => {
     const c = ph.chords[b % ph.chords.length];
-    return c ? voicedLabel(t, c, sc) : '';
+    return c ? voicedLabel(t, c, sc, !!state.settings.guitarAcc) : '';
   });
 }
 
@@ -466,9 +465,10 @@ function updateCtxLabel() {
   if (!top) return;
   if (state.mode === 'acc') {
     // ギター向けのときは押さえ方（フォーム）を出す
-    const ph = top._phrase;
-    top.querySelector('.ctx').textContent =
-      state.settings.guitarAcc && ph ? [...new Set(ph.chords.map((c) => guitarShape(c).name))].join(' / ') : '';
+    const t = top._acc;
+    const names = [];
+    if (state.settings.guitarAcc && t) for (const ph of accPreview()) for (const c of ph.chords) if (c) names.push(accVoicing(t, c, keyScalePcs(), true).shape.name);
+    top.querySelector('.ctx').textContent = [...new Set(names)].join(' / ');
   } else top.querySelector('.ctx').textContent = state.contextOn ? (lastKept() ? '◀ 直前のキープから' : '（棚が空）') : '';
 }
 
@@ -671,7 +671,7 @@ function voicings() {
   const vars = voiceVariants(item, 5, [], voiceCtx());
   curDeck().splice(1, 0, ...vars);
   renderBack();
-  toast(state.settings.guitarAcc ? `コードごとに構成音を変えた候補を${vars.length}つ追加（ギター向けの間は押さえ方どおりの音）` : `コードごとに構成音を変えた候補を${vars.length}つ追加`);
+  toast(`コードごとに構成音を変えた候補を${vars.length}つ追加`);
 }
 
 function togglePlay() {
@@ -832,7 +832,7 @@ function accPreviewPhrase() {
 function voiceCtx() {
   const seen = new Map();
   for (const ph of [...state.shelf, ...accPreview()]) for (const c of ph.chords) if (c) seen.set(c.label, c);
-  return { chords: [...seen.values()], scale: keyScalePcs() };
+  return { chords: [...seen.values()], scale: keyScalePcs(), guitar: !!state.settings.guitarAcc };
 }
 
 // 伴奏の棚の1つを、リズムはそのままで構成音だけ変えた候補から選び直す
