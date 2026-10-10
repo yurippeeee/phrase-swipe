@@ -7,8 +7,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Phrase Swipe</title>
-  <meta name="app-version" content="2026100718">
-  <link rel="stylesheet" href="css/style.css?v=2026100718">
+  <meta name="app-version" content="2026100719">
+  <link rel="stylesheet" href="css/style.css?v=2026100719">
 </head>
 <body>
   <div id="app">
@@ -136,6 +136,10 @@
       <div class="field">BPM <output id="bpmOut"></output>
         <input type="range" id="setBpm" min="60" max="240" step="1">
       </div>
+      <div class="field check-field">
+        <label><input type="checkbox" id="setGuitarAcc"> 伴奏をギターで弾ける形にする</label>
+        <small>コードをオープンコード／バレーの押さえ方で鳴らし、伴奏はその形の弦を鳴らすだけにします（ギター用の書き出しもこの形）</small>
+      </div>
       <div class="field">伴奏の音量 <output id="accVolOut"></output>
         <input type="range" id="setAccVol" min="-12" max="12" step="1">
       </div>
@@ -173,17 +177,17 @@
   <script type="importmap">
   {
     "imports": {
-      "./js/accomp.js": "./js/accomp.js?v=2026100718",
-      "./js/app.js": "./js/app.js?v=2026100718",
-      "./js/audio.js": "./js/audio.js?v=2026100718",
-      "./js/generator.js": "./js/generator.js?v=2026100718",
-      "./js/midi.js": "./js/midi.js?v=2026100718",
-      "./js/progressions.js": "./js/progressions.js?v=2026100718",
-      "./js/roll.js": "./js/roll.js?v=2026100718",
-      "./js/theory.js": "./js/theory.js?v=2026100718"
+      "./js/accomp.js": "./js/accomp.js?v=2026100719",
+      "./js/app.js": "./js/app.js?v=2026100719",
+      "./js/audio.js": "./js/audio.js?v=2026100719",
+      "./js/generator.js": "./js/generator.js?v=2026100719",
+      "./js/midi.js": "./js/midi.js?v=2026100719",
+      "./js/progressions.js": "./js/progressions.js?v=2026100719",
+      "./js/roll.js": "./js/roll.js?v=2026100719",
+      "./js/theory.js": "./js/theory.js?v=2026100719"
     }
   }
   </script>
-  <script type="module" src="js/app.js?v=2026100718"></script>
+  <script type="module" src="js/app.js?v=2026100719"></script>
 </body>
 </html>

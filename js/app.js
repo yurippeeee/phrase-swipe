@@ -1,5 +1,6 @@
 import { KEY_NAMES, parseProgression } from './theory.js';
 import { generateAcc, defaultAcc, DEFAULT_ACC_ID, accVariants, accName, realizeBar } from './accomp.js';
+import { guitarShape } from './guitar.js';
 import { START_DEGREES, PROGRESSIONS, PROG_NAMES } from './progressions.js';
 import { generatePhrase, makeVariants, chordVariants, copyPhrase, endingVariants, transposePhrase, originLabel, STEPS_PER_BAR } from './generator.js';
 import * as audio from './audio.js';
@@ -162,7 +163,7 @@ function buildSeq(phrases, withAcc, accOverride) {
       const c = ph.chords[b % ph.chords.length];
       // この小節で鳴っているメロディ（合いの手を合わせるため）
       const mel = ph.notes.filter((n) => n.s < (b + 1) * STEPS_PER_BAR && n.s + n.d > b * STEPS_PER_BAR).map((n) => ({ s: n.s - b * STEPS_PER_BAR, d: n.d }));
-      if (c) for (const a of realizeBar(t, c, b, mel)) acc.push({ ...a, s: a.s + off + b * STEPS_PER_BAR });
+      if (c) for (const a of realizeBar(t, c, b, mel, !!state.settings.guitarAcc)) acc.push({ ...a, s: a.s + off + b * STEPS_PER_BAR });
     }
     ranges.push([off, off + ph.bars * STEPS_PER_BAR]);
     off += ph.bars * STEPS_PER_BAR;
@@ -393,8 +394,12 @@ function renderProgBar() {
 function updateCtxLabel() {
   const top = topCard();
   if (!top) return;
-  if (state.mode === 'acc') top.querySelector('.ctx').textContent = '';
-  else top.querySelector('.ctx').textContent = state.contextOn ? (lastKept() ? '◀ 直前のキープから' : '（棚が空）') : '';
+  if (state.mode === 'acc') {
+    // ギター向けのときは押さえ方（フォーム）を出す
+    const ph = top._phrase;
+    top.querySelector('.ctx').textContent =
+      state.settings.guitarAcc && ph ? [...new Set(ph.chords.map((c) => guitarShape(c).name))].join(' / ') : '';
+  } else top.querySelector('.ctx').textContent = state.contextOn ? (lastKept() ? '◀ 直前のキープから' : '（棚が空）') : '';
 }
 
 function topCard() {
@@ -951,6 +956,7 @@ function syncSettingsForm() {
   });
   $('setBpm').value = draft.bpm;
   $('setAccVol').value = draft.accVol;
+  $('setGuitarAcc').checked = !!draft.guitarAcc;
   $('setProg').value = draft.prog;
   progStart = null;
   refreshForm();
@@ -1110,6 +1116,13 @@ function bindSettings() {
     audio.setAccVolume(draft.accVol);
     save();
     refreshForm();
+  });
+  // ギター向けの伴奏：その場で切り替えて聴き比べられるように即反映
+  $('setGuitarAcc').addEventListener('change', (e) => {
+    draft.guitarAcc = e.target.checked;
+    state.settings.guitarAcc = draft.guitarAcc;
+    save();
+    toast(draft.guitarAcc ? 'ギターで弾ける押さえ方で伴奏します' : 'ふつうの伴奏に戻しました');
   });
   $('setProg').addEventListener('input', (e) => {
     draft.prog = e.target.value;

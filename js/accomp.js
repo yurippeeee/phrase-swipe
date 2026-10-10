@@ -4,6 +4,8 @@
 //   記号: 'R' ベースの根音 / 'F' ベースの5度 / 'O' ベースの1オクターブ上 / 'C' 和音（密集配置）/ 数字 コードトーンの段（0=下から）
 //   inst: 'pad' 持続する和音 / 'keys' 鍵盤 / 'bass' ベース
 
+import { guitarShape, guitarNotes } from './guitar.js';
+
 const rand = Math.random;
 const pick = (arr) => arr[Math.floor(rand() * arr.length)];
 function weighted(items, weights) {
@@ -258,8 +260,25 @@ function fitToMelody(t, bar, barIndex, melody) {
 }
 
 // コードに当てはめて音（{p,s,d,inst}）にする。melody を渡すと合いの手を合わせる
-export function realizeBar(t, chord, barIndex, melody) {
+// guitar: ギターの押さえ方（1小節1フォーム）の弦で鳴らす
+export function realizeBar(t, chord, barIndex, melody, guitar = false) {
   const bar = fitToMelody(t, t.bars[barIndex % t.bars.length], barIndex, melody);
+  if (guitar) {
+    const shape = guitarShape(chord);
+    const out = [];
+    const seen = new Set();
+    for (const e of bar) {
+      for (const v of e.v) {
+        for (const x of guitarNotes(shape, v, e.inst)) {
+          const k = `${e.s}|${x.p}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          out.push({ p: x.p, s: e.s, d: e.d, inst: e.inst });
+        }
+      }
+    }
+    return out;
+  }
   const root = 40 + ((chord.rootPc - 4 + 12) % 12); // E2〜D#3（スマホでも聞こえる高さ）
   // 段: reg 以上のコードトーンを下から順に
   const ladder = [];
