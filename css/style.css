@@ -152,6 +152,13 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .badge { display: inline-block; min-width: 22px; padding: 1px 6px; border-radius: 999px; background: var(--panel-2); font-size: 12px; }
 
 /* 棚 */
+.songbar { display: flex; gap: 6px; align-items: center; margin: 4px 0 6px; }
+.songbar select {
+  flex: 1; min-width: 0; min-height: 44px; padding: 0 10px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--text); font-size: 15px; font-weight: 700;
+}
+.songbar .chip { min-height: 44px; padding: 0 10px; font-size: 13px; white-space: nowrap; }
+.songbar .chip:disabled { opacity: 0.35; }
 .shelf-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; padding: 6px 2px; }
 .shelf { list-style: none; margin: 0; padding: 0; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .shelf-empty { flex: 1; color: var(--muted); text-align: center; padding-top: 40px; line-height: 1.8; }

@@ -32,15 +32,48 @@ const state = {
   accFit: 0.5, // 伴奏の候補の合いの手の強さ（スライダー）
   cardPlaying: true,
   judged: 0,
+  songs: [], // 曲の一覧（今の曲は state の shelf・設定が正。保存時に書き戻す）
+  songId: null,
 };
+
+// ---------- 曲（棚）を複数持つ ----------
+// 曲ごと：キー・スケール・BPM・コード進行・棚・これからの標準の伴奏・区切りの予約
+// 全曲共通：伴奏の棚・音量・ギター向け・長さ など
+const SONG_SETTINGS = ['key', 'scale', 'bpm', 'prog'];
+const newSongId = () => 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+const curSong = () => state.songs.find((x) => x.id === state.songId);
+
+function snapshotSong() {
+  const song = curSong();
+  if (!song) return;
+  for (const k of SONG_SETTINGS) song[k] = state.settings[k];
+  song.shelf = state.shelf;
+  song.accDefault = state.accDefault;
+  song.forcePos = state.forcePos;
+  song.pendingProg = state.pendingProg;
+}
+
+function applySong(song) {
+  state.songId = song.id;
+  for (const k of SONG_SETTINGS) if (song[k] != null) state.settings[k] = song[k];
+  state.shelf = Array.isArray(song.shelf) ? song.shelf : [];
+  state.accDefault = song.accDefault && song.accDefault.bars ? song.accDefault : defaultAcc();
+  state.forcePos = Number.isInteger(song.forcePos) ? song.forcePos : null;
+  state.pendingProg = typeof song.pendingProg === 'string' ? song.pendingProg : null;
+}
+
+function songName(song) {
+  return song.name || `曲${state.songs.indexOf(song) + 1}`;
+}
 
 // ---------- 保存 ----------
 function save() {
   try {
-    const { settings, shelf, contextOn, padOn, melodyOn, judged, accDefault, forcePos, accLib, pendingProg, accFit } = state;
+    snapshotSong();
+    const { settings, shelf, contextOn, padOn, melodyOn, judged, accDefault, forcePos, accLib, pendingProg, accFit, songs, songId } = state;
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, melodyOn, judged, accDefault, forcePos, accLib, pendingProg, accFit }),
+      JSON.stringify({ settings, settingsVer: SETTINGS_VER, shelf, contextOn, padOn, melodyOn, judged, accDefault, forcePos, accLib, pendingProg, accFit, songs, songId }),
     );
   } catch (e) {
     /* 容量超過やプライベートモード */
@@ -69,6 +102,10 @@ function load() {
     if (!Array.isArray(d.accLib)) for (const t of [state.accDefault, ...state.shelf.map((p) => p.acc)]) addToLib(t);
     state.forcePos = Number.isInteger(d.forcePos) ? d.forcePos : null;
     state.pendingProg = typeof d.pendingProg === 'string' ? d.pendingProg : null;
+    if (Array.isArray(d.songs) && d.songs.length) {
+      state.songs = d.songs;
+      applySong(state.songs.find((x) => x.id === d.songId) || state.songs[0]);
+    }
   } catch (e) {
     /* 壊れたデータは無視 */
   }
@@ -708,6 +745,7 @@ function updateCounts() {
 }
 
 function renderShelf() {
+  renderSongBar();
   const ul = $('shelf');
   ul.innerHTML = '';
   stopSong();
@@ -1031,7 +1069,7 @@ function exportForGuitar() {
     app: 'phrase-swipe',
     version: 1,
     exported: new Date().toISOString(),
-    name: `Phrase Swipe ${fileStamp()}`,
+    name: curSong() ? songName(curSong()) : `Phrase Swipe ${fileStamp()}`,
     key,
     scale,
     bpm,
@@ -1268,9 +1306,88 @@ function bindSettings() {
   $('sheetBackdrop').onclick = () => openSheet(false);
 }
 
+// ---------- 曲の切り替え ----------
+function renderSongBar() {
+  const sel = $('songSel');
+  sel.innerHTML = '';
+  for (const song of state.songs) {
+    const o = document.createElement('option');
+    o.value = song.id;
+    const n = song.id === state.songId ? state.shelf.length : (song.shelf || []).length;
+    o.textContent = `${songName(song)}（${n}）`;
+    sel.append(o);
+  }
+  sel.value = state.songId;
+  $('btnSongDel').disabled = state.songs.length < 2;
+}
+
+// 曲を替えたら、候補・探索中の状態は作り直す
+function afterSongChange() {
+  stopSong();
+  audio.stop();
+  state.deck = [];
+  state.near = null;
+  state.nearDeck = [];
+  state.accDeck = [];
+  state.accReplace = null;
+  state.accTargetId = null;
+  relayout();
+  syncSettingsForm();
+  updateInfo();
+  updateAccLabels();
+  updateCounts();
+  save();
+  renderSongBar();
+  renderShelf();
+}
+
+function switchSong(id) {
+  if (id === state.songId) return;
+  const song = state.songs.find((x) => x.id === id);
+  if (!song) return;
+  snapshotSong();
+  applySong(song);
+  afterSongChange();
+  toast(`「${songName(song)}」に切り替え`);
+}
+
+function newSong() {
+  snapshotSong();
+  const n = state.songs.length + 1;
+  // キー・BPM・進行・標準の伴奏は今の曲から引き継ぐ
+  const song = { id: newSongId(), name: `曲${n}`, shelf: [], accDefault: state.accDefault, forcePos: null, pendingProg: null };
+  for (const k of SONG_SETTINGS) song[k] = state.settings[k];
+  state.songs.push(song);
+  applySong(song);
+  afterSongChange();
+  toast(`「${song.name}」を作りました（キー・進行は設定で変えられます）`);
+}
+
+function renameSong() {
+  const song = curSong();
+  if (!song) return;
+  const name = prompt('曲の名前', songName(song));
+  if (name == null || !name.trim()) return;
+  song.name = name.trim().slice(0, 40);
+  save();
+  renderSongBar();
+  updateInfo();
+}
+
+function deleteSong() {
+  const song = curSong();
+  if (!song || state.songs.length < 2) return;
+  if (!confirm(`「${songName(song)}」を削除しますか？（棚のフレーズも消えます）`)) return;
+  const i = state.songs.indexOf(song);
+  state.songs.splice(i, 1);
+  applySong(state.songs[Math.max(0, i - 1)]);
+  afterSongChange();
+}
+
 function updateInfo() {
   const s = state.settings;
-  $('info').textContent = `${KEY_NAMES[s.key]} ${s.scale === 'major' ? 'Major' : 'minor'} · ${s.bpm} BPM · ${s.prog}`;
+  const song = curSong();
+  $('info').textContent = `${song ? songName(song) + ' · ' : ''}${KEY_NAMES[s.key]} ${s.scale === 'major' ? 'Major' : 'minor'} · ${s.bpm} BPM · ${s.prog}`;
 }
 
 // ---------- 共通 ----------
@@ -1322,6 +1439,12 @@ function init() {
   const ver = document.querySelector('meta[name="app-version"]');
   $('appVersion').textContent = `ver ${ver ? ver.content : '?'}`;
   load();
+  if (!state.songs.length) {
+    // 曲が1つだった頃のデータは「曲1」に
+    state.songs = [{ id: newSongId(), name: '曲1' }];
+    state.songId = state.songs[0].id;
+    snapshotSong();
+  }
   relayout();
   updateInfo();
   updateCounts();
@@ -1407,6 +1530,10 @@ function init() {
   $('btnPlaySong').onclick = () => (songPlaying ? stopSong() : playSong());
   $('btnMidi').onclick = exportMidi;
   $('btnGuitar').onclick = exportForGuitar;
+  $('songSel').onchange = (e) => switchSong(e.target.value);
+  $('btnSongNew').onclick = newSong;
+  $('btnSongName').onclick = renameSong;
+  $('btnSongDel').onclick = deleteSong;
   $('btnClear').onclick = () => {
     if (!state.shelf.length || !confirm('キープ棚を全部消しますか？')) return;
     state.shelf = [];
