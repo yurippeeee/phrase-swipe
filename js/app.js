@@ -17,6 +17,7 @@ const state = {
   shelf: [],
   mode: 'melody', // 'melody' | 'acc'（伴奏を選ぶ）
   accDeck: [],
+  accReplace: null, // 伴奏の棚の1つを構成音違いで差し替え中 { id }
   accTargetId: null, // 棚の ♫ で選んだ「このフレーズだけ」の対象。null なら曲全体
   accDefault: defaultAcc(), // これからキープするフレーズに付く伴奏
   accLib: [], // 伴奏の棚（♥した伴奏）
@@ -227,8 +228,11 @@ function addToLib(t) {
 
 const accSpecific = () => state.shelf.find((p) => p.id === state.accTargetId) || null;
 
+const accReplaceOrig = () => (state.accReplace && state.accLib.find((x) => x.id === state.accReplace.id)) || null;
+
 function accTarget() {
-  const t = accSpecific() || lastKept();
+  const using = state.accReplace && state.shelf.find((p) => accOf(p).id === state.accReplace.id);
+  const t = accSpecific() || using || lastKept();
   if (t) return t;
   fillDeck();
   return state.deck[0];
@@ -241,11 +245,14 @@ function fillCur() {
     else while (state.nearDeck.length < 3) state.nearDeck.push(...nearVariants(t));
   }
   if (state.near) return;
-  if (state.mode === 'acc') while (state.accDeck.length < 3) state.accDeck.push(generateAcc(null, state.accFit));
+  const orig = accReplaceOrig();
+  if (state.mode === 'acc' && orig) while (state.accDeck.length < 3) state.accDeck.push(...voiceVariants(orig, 5));
+  else if (state.mode === 'acc') while (state.accDeck.length < 3) state.accDeck.push(generateAcc(null, state.accFit));
   else fillDeck();
 }
 
 function setMode(mode) {
+  if (mode !== 'acc') state.accReplace = null;
   state.mode = mode;
   for (const b of document.querySelectorAll('#modeSeg button')) b.classList.toggle('on', b.dataset.mode === mode);
   $('tglContext').classList.toggle('hidden', mode === 'acc');
@@ -309,7 +316,8 @@ function accCardEl(t, behind) {
   el.querySelector('.tag').textContent = accName(t);
   const target = accTarget();
   const k = state.shelf.indexOf(target);
-  el.querySelector('.num').textContent = accSpecific() ? `棚の${k + 1}番だけ` : '曲全体';
+  el.querySelector('.num').textContent = accSpecific() ? `棚の${k + 1}番だけ` : accReplaceOrig() ? '棚の伴奏を差し替え' : '曲全体';
+  if (accReplaceOrig()) el.querySelector('.card-foot span:last-child').textContent = '差し替え →';
   el._acc = t;
   el._phrase = target;
   el._segs = [{ phrase: target, acc: buildSeq([target], true, t).acc, accFocus: true, labels: accLabels(target, t) }];
@@ -351,7 +359,18 @@ function renderDeck() {
 // コード進行の帯：今のカードが進行のどこかを示す。タップでそのコードから作り直す
 function renderProgBar() {
   const bar = $('progBar');
-  bar.classList.toggle('hidden', state.mode === 'acc');
+  const orig = state.mode === 'acc' && accReplaceOrig();
+  bar.classList.toggle('hidden', state.mode === 'acc' && !orig);
+  if (orig) {
+    bar.innerHTML = `<span class="neartitle">伴奏の棚の${state.accLib.indexOf(orig) + 1}番の構成音を変える（リズムはそのまま・♥で差し替え）</span>`;
+    const stop = document.createElement('button');
+    stop.className = 'change';
+    stop.textContent = 'やめる';
+    stop.onclick = () => endAccReplace();
+    bar.append(stop);
+    bar.classList.remove('pending');
+    return;
+  }
   const nt = nearTarget();
   if (nt) {
     bar.innerHTML = `<span class="neartitle">棚の${state.shelf.indexOf(nt) + 1}番に近いのを探索中（♥で差し替え）</span>`;
@@ -497,6 +516,17 @@ function decide(kind) {
     relayout();
     toast(`棚の${k + 1}番を差し替えました`);
     setTimeout(() => endNear(true), 250);
+  } else if (kind === 'keep' && state.mode === 'acc' && accReplaceOrig()) {
+    // 伴奏の棚から：その伴奏と差し替え、使っているフレーズもまとめて変える
+    const old = accReplaceOrig();
+    const k = state.accLib.indexOf(old);
+    state.accLib[k] = item;
+    let n = 0;
+    for (const p of state.shelf) if (p.acc && p.acc.id === old.id) (p.acc = item), n++;
+    if (state.accDefault.id === old.id) state.accDefault = item;
+    toast(`伴奏の棚の${k + 1}番を差し替えました${n ? `（${n}フレーズに反映）` : ''}`);
+    setTimeout(() => endAccReplace(), 250);
+    updateAccLabels();
   } else if (kind === 'keep' && state.mode === 'acc') {
     const one = accSpecific();
     addToLib(item);
@@ -760,6 +790,22 @@ function accPreviewPhrase() {
   return { bars: 2, notes: [], chords: [prog[0], prog[1 % prog.length]] };
 }
 
+// 伴奏の棚の1つを、リズムはそのままで構成音だけ変えた候補から選び直す
+function startAccReplace(t) {
+  state.accReplace = { id: t.id };
+  state.accTargetId = null;
+  state.accDeck = voiceVariants(t, 5);
+  setMode('acc');
+  showView('viewSwipe');
+}
+
+function endAccReplace() {
+  state.accReplace = null;
+  state.accDeck = [];
+  save();
+  showView('viewShelf');
+}
+
 function renderAccShelf() {
   const ul = $('accShelf');
   ul.innerHTML = '';
@@ -769,7 +815,7 @@ function renderAccShelf() {
     const li = document.createElement('li');
     li.className = 'row accrow';
     const uses = state.shelf.filter((p) => accOf(p).id === t.id).length;
-    li.innerHTML = `<canvas></canvas><button class="play" aria-label="試聴">▶</button><button class="near">近いの</button><button class="all">全体</button><button class="del" aria-label="削除">✕</button>
+    li.innerHTML = `<canvas></canvas><button class="play" aria-label="試聴">▶</button><button class="near">近いの</button><button class="voice">構成音</button><button class="all">全体</button><button class="del" aria-label="削除">✕</button>
       <span class="name">${i + 1}. ${accName(t)}</span><span class="use">${uses ? `${uses}フレーズで使用中` : '未使用'}${t.id === state.accDefault.id ? '・これからの標準' : ''}</span>`;
     li.querySelector('.play').onclick = () => {
       if (!audio.isUnlocked()) return;
@@ -784,6 +830,7 @@ function renderAccShelf() {
       showView('viewSwipe');
       toast(`「${accName(t)}」に近い伴奏を5つ用意`);
     };
+    li.querySelector('.voice').onclick = () => startAccReplace(t);
     li.querySelector('.all').onclick = () => {
       applyAccToAll(t);
       renderShelf();

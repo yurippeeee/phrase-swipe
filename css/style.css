@@ -177,14 +177,15 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 /* 棚：フレーズ／伴奏 */
 .shelfpane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #shelfSeg { margin-bottom: 4px; }
-.row.accrow { grid-template-columns: 1fr 40px 52px 48px 36px; }
-.row.accrow .near { color: var(--acc); font-size: 13px; }
+.row.accrow { grid-template-columns: 1fr 32px 44px 46px 38px 30px; }
+.row.accrow .near, .row.accrow .voice, .row.accrow .all { white-space: nowrap; padding: 0; letter-spacing: -0.02em; }
+.row.accrow .near, .row.accrow .voice { color: var(--acc); font-size: 12px; }
 .progbar .neartitle { flex: 1; align-self: center; font-size: 12px; color: var(--note-pass); font-weight: 700; }
 .tag.chord { color: #9be37c; }
 .row.accrow .name { position: absolute; left: 12px; top: 8px; font-size: 12px; font-weight: 700; color: var(--acc); pointer-events: none; }
 .row.accrow .use { position: absolute; left: 12px; bottom: 8px; font-size: 10px; color: var(--muted); pointer-events: none; }
 .row.accrow button { height: 68px; font-size: 15px; font-weight: 700; color: var(--muted); }
-.row.accrow .all { color: var(--accent); font-size: 13px; }
+.row.accrow .all { color: var(--accent); font-size: 12px; }
 
 /* 伴奏ピッカー */
 .pick-hint { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
