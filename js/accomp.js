@@ -418,8 +418,29 @@ function fitToMelody(t, bar, barIndex, melody) {
 // コードに当てはめて音（{p,s,d,inst}）にする。melody を渡すと合いの手を合わせる
 // guitar: ギターの押さえ方（1小節1フォーム）の弦で鳴らす（響きは押さえ方が決めるので使わない）
 // scale: キーの音階のピッチクラス（響きの音を選ぶため）
-export function realizeBar(t, chord, barIndex, melody, guitar = false, scale = null) {
+// splits: [{ cut, chord }] そのステップから先は別のコードで鳴らす（コードの変わり目を小節線からずらす）。
+//   cut をまたいで伸びる音は cut で切り、続きを新しいコードで鳴らし直す
+export function realizeBar(t, chord, barIndex, melody, guitar = false, scale = null, splits = null) {
   const bar = fitToMelody(t, t.bars[barIndex % t.bars.length], barIndex, melody);
+  const cuts = (splits || []).filter((x) => x && x.chord && x.cut > 0 && x.cut < 16).sort((a, b) => a.cut - b.cut);
+  if (!cuts.length) return realizeEvents(t, chord, bar, guitar, scale);
+  const segs = [{ from: 0, chord }, ...cuts.map((x) => ({ from: x.cut, chord: x.chord }))];
+  const out = [];
+  segs.forEach((g, i) => {
+    const to = i + 1 < segs.length ? segs[i + 1].from : 16;
+    const part = [];
+    for (const e of bar) {
+      const s0 = Math.max(e.s, g.from);
+      const s1 = Math.min(e.s + e.d, to);
+      // その区間で鳴り始める音と、前の区間から伸びてきた音（区間の頭で鳴らし直す）
+      if (s1 > s0 && (e.s >= g.from || s0 === g.from)) part.push({ ...e, s: s0, d: s1 - s0 });
+    }
+    out.push(...realizeEvents(t, g.chord, part, guitar, scale));
+  });
+  return out;
+}
+
+function realizeEvents(t, chord, bar, guitar, scale) {
   const vc = accVoicing(t, chord, scale, guitar);
   if (guitar) {
     const shape = vc.shape;

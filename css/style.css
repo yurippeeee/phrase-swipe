@@ -169,7 +169,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .row {
   display: grid; grid-template-columns: 36px 1fr 40px 40px 40px; align-items: center; gap: 2px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-  padding: 6px; margin-bottom: 8px; position: relative;
+  padding: 6px; margin-bottom: 12px; position: relative;
 }
 .row.playing { border-color: var(--accent); }
 .row.dragging { z-index: 5; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5); opacity: 0.95; }
@@ -282,3 +282,9 @@ input[type="text"] {
   .act { height: 70px; }
   .wide { height: 56px; }
 }
+.row .shiftbadge {
+  position: absolute; left: 50%; top: -15px; transform: translateX(-50%); z-index: 2;
+  min-height: 22px; padding: 1px 10px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.row .shiftbadge.on { background: #3a3220; border-color: var(--acc); color: var(--text); }

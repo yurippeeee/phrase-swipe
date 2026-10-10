@@ -199,6 +199,32 @@ function accLabels(ph, t) {
   });
 }
 
+// ---------- コードの変わり目（区間の境目）----------
+// ph.shift：このフレーズの頭でコードが変わる位置を、小節線からずらす（16分単位）。
+//   負＝前の区間の終わりに食い込む（先取り）、正＝前のコードをこの区間の頭まで残す。null＝自動
+const SHIFT_OPTIONS = [null, 0, -2, -4, -8, 4];
+const shiftName = (v) => (v === 0 ? 'ぴったり' : v < 0 ? `${{ 2: '8分', 4: '4分', 8: '2拍' }[-v] || -v + '/16'}前` : `${{ 2: '8分', 4: '4分', 8: '2拍' }[v] || v + '/16'}遅れ`);
+
+// 自動：前の区間の最後のメロディが裏拍から小節線まで伸びていて、次のコードの音なら、そこでコードも変える（食い）
+function autoShift(prev, next) {
+  const A = prev.chords[(prev.bars - 1) % prev.chords.length];
+  const B = next.chords[0];
+  if (!A || !B || A.label === B.label || !prev.notes.length) return 0;
+  const end = prev.bars * STEPS_PER_BAR;
+  const n = prev.notes.reduce((a, x) => (x.s > a.s ? x : a), prev.notes[0]);
+  const pc = ((n.p % 12) + 12) % 12;
+  if (n.s + n.d < end || n.s < end - 4 || n.s % 4 === 0) return 0;
+  if (!B.pcs.includes(pc) || A.pcs.includes(pc)) return 0;
+  // 次の区間の頭で別の音を弾き直すなら、食いではない
+  if (next.notes.some((x) => x.s === 0 && x.p !== n.p)) return 0;
+  return n.s - end;
+}
+
+function boundaryShift(prev, next) {
+  if (!prev || !next) return 0;
+  return next.shift != null ? next.shift : autoShift(prev, next);
+}
+
 // accOverride: 伴奏の候補を試すときに、フレーズの伴奏の代わりに使う型
 function buildSeq(phrases, withAcc, accOverride) {
   const notes = [];
@@ -206,18 +232,30 @@ function buildSeq(phrases, withAcc, accOverride) {
   const ranges = [];
   let off = 0;
   const scalePcs = keyScalePcs();
-  for (const ph of phrases) {
+  // 境目 i（phrases[i] の頭）のずれ
+  const shifts = phrases.map((ph, i) => (i ? boundaryShift(phrases[i - 1], ph) : 0));
+  phrases.forEach((ph, i) => {
     for (const n of ph.notes) notes.push({ p: n.p, s: n.s + off, d: n.d });
     const t = accOverride || accOf(ph);
+    const prev = phrases[i - 1];
+    const next = phrases[i + 1];
     for (let b = 0; b < ph.bars; b++) {
-      const c = ph.chords[b % ph.chords.length];
+      let c = ph.chords[b % ph.chords.length];
+      const splits = [];
+      // 前のコードを残す：小節の頭は前の区間の最後のコードで、shift から自分のコード
+      if (b === 0 && prev && shifts[i] > 0) {
+        splits.push({ cut: shifts[i], chord: c });
+        c = prev.chords[(prev.bars - 1) % prev.chords.length];
+      }
+      // 次のコードを先取り：最後の小節の終わりを次の区間の最初のコードで
+      if (b === ph.bars - 1 && next && shifts[i + 1] < 0) splits.push({ cut: STEPS_PER_BAR + shifts[i + 1], chord: next.chords[0] });
       // この小節で鳴っているメロディ（合いの手を合わせるため）
       const mel = ph.notes.filter((n) => n.s < (b + 1) * STEPS_PER_BAR && n.s + n.d > b * STEPS_PER_BAR).map((n) => ({ s: n.s - b * STEPS_PER_BAR, d: n.d }));
-      if (c) for (const a of realizeBar(t, c, b, mel, !!state.settings.guitarAcc, scalePcs)) acc.push({ ...a, s: a.s + off + b * STEPS_PER_BAR });
+      if (c) for (const a of realizeBar(t, c, b, mel, !!state.settings.guitarAcc, scalePcs, splits)) acc.push({ ...a, s: a.s + off + b * STEPS_PER_BAR });
     }
     ranges.push([off, off + ph.bars * STEPS_PER_BAR]);
     off += ph.bars * STEPS_PER_BAR;
-  }
+  });
   return { steps: off, notes, acc: withAcc ? acc : [], allAcc: acc, ranges };
 }
 
@@ -829,6 +867,25 @@ function renderShelf() {
     li.classList.toggle('secstart', !!ph.progChange);
     if (ph.notes.length) badges.append(near);
     badges.append(badge);
+    // コードの変わり目：前の区間との境目。タップで 自動→ぴったり→8分前→4分前→2拍前→4分遅れ
+    const k = at();
+    if (k > 0) {
+      const sb = document.createElement('button');
+      const eff = boundaryShift(state.shelf[k - 1], ph);
+      sb.className = 'shiftbadge' + (eff ? ' on' : '');
+      sb.textContent = `⇤${ph.shift == null ? (eff ? '自動 ' + shiftName(eff) : '自動') : shiftName(ph.shift)}`;
+      sb.setAttribute('aria-label', 'コードの変わり目（前の区間との境目）');
+      sb.onclick = () => {
+        const i = SHIFT_OPTIONS.indexOf(ph.shift ?? null);
+        ph.shift = SHIFT_OPTIONS[(i + 1) % SHIFT_OPTIONS.length];
+        if (ph.shift == null) delete ph.shift;
+        save();
+        renderShelf();
+        const e2 = boundaryShift(state.shelf[at() - 1], ph);
+        toast(`${at() + 1}番の頭のコード：${ph.shift == null ? '自動（' + (e2 ? shiftName(e2) : 'ぴったり') + '）' : shiftName(ph.shift)}`);
+      };
+      li.append(sb);
+    }
     li.append(badges);
     // 小節数が分かるよう、短いフレーズは幅も短く
     const maxBars = Math.max(...state.shelf.map((p) => p.bars));
