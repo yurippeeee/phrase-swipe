@@ -220,25 +220,45 @@ function autoShift(prev, next) {
   return n.s - end;
 }
 
+// フレーズの中でコードが変わる位置 [{ s, label, moved }]
+function chordMarks(ph, around) {
+  const marks = [];
+  const lastOf = (p) => p.chords[(p.bars - 1) % p.chords.length];
+  const startShift = around.prev ? boundaryShift(around.prev, ph) : 0;
+  for (let b = 0; b < ph.bars; b++) {
+    const c = ph.chords[b % ph.chords.length];
+    if (!c) continue;
+    if (b === 0 && startShift > 0) {
+      marks.push({ s: 0, label: lastOf(around.prev).label, moved: true });
+      marks.push({ s: startShift, label: c.label, moved: true });
+    } else marks.push({ s: b * STEPS_PER_BAR, label: c.label });
+  }
+  const endShift = around.next ? boundaryShift(ph, around.next) : 0;
+  if (endShift < 0) marks.push({ s: ph.bars * STEPS_PER_BAR + endShift, label: around.next.chords[0].label, moved: true });
+  return marks;
+}
+
 function boundaryShift(prev, next) {
   if (!prev || !next) return 0;
   return next.shift != null ? next.shift : autoShift(prev, next);
 }
 
 // accOverride: 伴奏の候補を試すときに、フレーズの伴奏の代わりに使う型
-function buildSeq(phrases, withAcc, accOverride) {
+// around: { prev, next } 並べたフレーズの前後（棚の1行だけ鳴らすときも境目のずれを反映する）
+function buildSeq(phrases, withAcc, accOverride, around = {}) {
   const notes = [];
   const acc = [];
   const ranges = [];
   let off = 0;
   const scalePcs = keyScalePcs();
   // 境目 i（phrases[i] の頭）のずれ
-  const shifts = phrases.map((ph, i) => (i ? boundaryShift(phrases[i - 1], ph) : 0));
+  const all = [around.prev, ...phrases, around.next];
+  const shifts = all.map((ph, i) => (i && ph && all[i - 1] ? boundaryShift(all[i - 1], ph) : 0)).slice(1);
   phrases.forEach((ph, i) => {
     for (const n of ph.notes) notes.push({ p: n.p, s: n.s + off, d: n.d });
     const t = accOverride || accOf(ph);
-    const prev = phrases[i - 1];
-    const next = phrases[i + 1];
+    const prev = all[i];
+    const next = all[i + 2];
     for (let b = 0; b < ph.bars; b++) {
       let c = ph.chords[b % ph.chords.length];
       const splits = [];
@@ -248,7 +268,7 @@ function buildSeq(phrases, withAcc, accOverride) {
         c = prev.chords[(prev.bars - 1) % prev.chords.length];
       }
       // 次のコードを先取り：最後の小節の終わりを次の区間の最初のコードで
-      if (b === ph.bars - 1 && next && shifts[i + 1] < 0) splits.push({ cut: STEPS_PER_BAR + shifts[i + 1], chord: next.chords[0] });
+      if (b === ph.bars - 1 && next && (shifts[i + 1] ?? 0) < 0) splits.push({ cut: STEPS_PER_BAR + shifts[i + 1], chord: next.chords[0] });
       // この小節で鳴っているメロディ（合いの手を合わせるため）
       const mel = ph.notes.filter((n) => n.s < (b + 1) * STEPS_PER_BAR && n.s + n.d > b * STEPS_PER_BAR).map((n) => ({ s: n.s - b * STEPS_PER_BAR, d: n.d }));
       if (c) for (const a of realizeBar(t, c, b, mel, !!state.settings.guitarAcc, scalePcs, splits)) acc.push({ ...a, s: a.s + off + b * STEPS_PER_BAR });
@@ -882,6 +902,8 @@ function renderShelf() {
         save();
         renderShelf();
         const e2 = boundaryShift(state.shelf[at() - 1], ph);
+        stopSong();
+        playPhrases([at() - 1, at()]);
         toast(`${at() + 1}番の頭のコード：${ph.shift == null ? '自動（' + (e2 ? shiftName(e2) : 'ぴったり') + '）' : shiftName(ph.shift)}`);
       };
       li.append(sb);
@@ -907,14 +929,20 @@ function drawShelfRows(playStep = -1) {
     }
     rows[i].classList.toggle('playing', step >= 0);
     const ph = rows[i]._phrase;
+    if (!ph) continue;
+    const k = state.shelf.indexOf(ph);
+    const around = { prev: state.shelf[k - 1], next: state.shelf[k + 1] };
+    // コード名は実際に変わる位置に（境目をずらしたところは印つき）
+    const marks = chordMarks(ph, around);
     // メロディなしの区間は伴奏を描く
-    if (ph) drawRoll(rows[i].querySelector('canvas'), [ph.notes.length ? { phrase: ph } : { phrase: ph, acc: buildSeq([ph], true).acc, accFocus: true }], { playStep: step });
+    drawRoll(rows[i].querySelector('canvas'), [ph.notes.length ? { phrase: ph, marks } : { phrase: ph, marks, acc: buildSeq([ph], true, undefined, around).acc, accFocus: true }], { playStep: step });
   }
 }
 
 function playPhrases(indices) {
   if (!audio.isUnlocked() || !indices.length) return;
-  const seq = buildSeq(indices.map((i) => state.shelf[i]), state.padOn);
+  const around = { prev: state.shelf[indices[0] - 1], next: state.shelf[indices[indices.length - 1] + 1] };
+  const seq = buildSeq(indices.map((i) => state.shelf[i]), state.padOn, undefined, around);
   if (!state.melodyOn) seq.notes = [];
   songRanges = seq.ranges;
   songRows = indices;

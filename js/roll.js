@@ -13,7 +13,7 @@ function colors() {
   return palette;
 }
 
-// segments: [{ phrase, faded, acc:[{p,s,d,inst}], accFocus, labels(小節ごとのコード名・任意) }] を左から並べて描画
+// segments: [{ phrase, faded, acc:[{p,s,d,inst}], accFocus, labels(小節ごとのコード名・任意), marks([{s,label,moved}] コードが変わる位置・任意) }] を左から並べて描画
 // accFocus: 伴奏を主役に描く（メロディは薄く）
 // opts: { playStep, labels(コード名表示) }
 export function drawRoll(canvas, segments, opts = {}) {
@@ -87,8 +87,27 @@ export function drawRoll(canvas, segments, opts = {}) {
       g.lineTo(xx, h);
       g.stroke();
     }
-    // コード名
-    if (labelH) {
+    // コード名：marks があれば実際に変わる位置に（小節線からずれた所は線と色で示す）
+    if (labelH && seg.marks) {
+      g.font = '600 11px system-ui, sans-serif';
+      g.textBaseline = 'middle';
+      for (const m of seg.marks) {
+        const mx = (x0 + m.s) * stepW;
+        if (m.moved && m.s % 16) {
+          g.fillStyle = C.acc;
+          g.globalAlpha = 0.8;
+          g.fillRect(Math.round(mx) - 1, labelH, 2, h - labelH);
+          g.globalAlpha = 1;
+        }
+        g.fillStyle = m.moved ? C.acc : seg.faded ? C.muted : C.chord;
+        // 小節の途中で変わるコード名は線の下側に（上はボタンと重なりやすい）。右端からはみ出さないよう左に寄せる
+        if (m.s % 16) {
+          const tw = g.measureText(m.label).width;
+          const tx = mx + 3 + tw > w - 2 ? mx - 3 - tw : mx + 3;
+          g.fillText(m.label, tx, h - 9);
+        } else g.fillText(m.label, mx + 5, labelH / 2 + 1);
+      }
+    } else if (labelH) {
       g.font = '600 11px system-ui, sans-serif';
       g.textBaseline = 'middle';
       for (let b = 0; b < ph.bars; b++) {
