@@ -105,6 +105,10 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .stamp.nope { right: 18px; color: var(--nope); transform: rotate(12deg); }
 
 /* 直前のキープ（くり返し操作） */
+.restbar { display: flex; gap: 6px; align-items: center; justify-content: flex-end; margin-bottom: 6px; }
+.restbar .chip { min-height: 38px; padding: 0 12px; font-size: 13px; }
+.restbar #btnRest[aria-expanded="true"] { border-color: var(--accent); color: var(--text); }
+.restopts { display: flex; gap: 6px; }
 .lastbar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .lastbar canvas { flex: 1; min-width: 0; height: 44px; border-radius: 10px; display: block; }
 .lastinfo { display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--muted); min-width: 30px; }

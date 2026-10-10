@@ -176,8 +176,9 @@ const fitsSlot = (p) => chordsKey(p.chords) === chordsKey(nextSlot(p.bars).chord
 function newCandidate() {
   const s = state.settings;
   const { chords, bars, pos } = nextSlot(pickBars());
-  const last = lastKept();
-  const prevPitch = last && last.notes.length ? last.notes[last.notes.length - 1].p : undefined;
+  // メロディなしの区間は飛ばして、最後に鳴ったメロディの音から続ける
+  const sung = [...state.shelf].reverse().find((p) => p.notes.length);
+  const prevPitch = sung ? sung.notes[sung.notes.length - 1].p : undefined;
   return generatePhrase({ key: s.key, scale: s.scale, chords, bars, pos, prevPitch });
 }
 
@@ -655,6 +656,8 @@ function runLength() {
 function updateLastBar() {
   const last = lastKept();
   $('lastBar').classList.toggle('hidden', !last || state.mode === 'acc' || !!state.near);
+  $('restBar').classList.toggle('hidden', state.mode === 'acc' || !!state.near);
+  $('btnEnding').classList.toggle('hidden', !last || !last.notes.length);
   if (!last) return;
   $('lastCount').textContent = `×${runLength()}`;
   drawRoll($('lastRoll'), [{ phrase: last }], { labels: false });
@@ -683,9 +686,29 @@ function repeatLast() {
 }
 
 // 直前のフレーズの語尾だけ違う候補を先頭に並べる
+// メロディなしの区間（伴奏だけ鳴る）を棚の最後に置く。コードは曲の位置どおりに進む
+function addRest(bars) {
+  const s = state.settings;
+  const slot = nextSlot(bars);
+  const last = lastKept();
+  const ph = { id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), bars, key: s.key, scale: s.scale, chords: slot.chords, pos: slot.pos, notes: [], origin: 'rest' };
+  ph.acc = (last && last.acc) || state.accDefault;
+  if (state.forcePos != null) ph.jump = state.forcePos;
+  if (state.pendingProg) ph.progChange = state.pendingProg;
+  state.shelf.push(ph);
+  state.forcePos = null;
+  state.pendingProg = null;
+  relayout();
+  state.deck = state.deck.filter(fitsSlot);
+  updateCounts();
+  save();
+  renderDeck();
+  toast(`メロディなし ${bars}小節を棚に追加（${state.shelf.length}）`);
+}
+
 function endingsOfLast() {
   const last = lastKept();
-  if (!last || deciding) return;
+  if (!last || deciding || !last.notes.length) return;
   const vars = endingVariants(last, nextSlot(last.bars), 5);
   state.deck = [...vars, ...state.deck.filter((p) => p.origin !== 'ending')];
   renderDeck();
@@ -766,7 +789,7 @@ function renderShelf() {
     // 行はフレーズそのものを持ち、操作時に現在の位置を引き直す（古い番号で別のフレーズを触らない）
     li._phrase = ph;
     const at = () => state.shelf.indexOf(ph);
-    li.innerHTML = `<button class="handle" aria-label="並べ替え">≡</button><canvas></canvas><button class="accbtn" aria-label="伴奏を選ぶ">♫</button><button class="dup" aria-label="くり返し（複製）">⧉</button><button class="del" aria-label="削除">✕</button><span class="idx">${i + 1} · ${accName(accOf(ph))}</span>`;
+    li.innerHTML = `<button class="handle" aria-label="並べ替え">≡</button><canvas></canvas><button class="accbtn" aria-label="伴奏を選ぶ">♫</button><button class="dup" aria-label="くり返し（複製）">⧉</button><button class="del" aria-label="削除">✕</button><span class="idx">${i + 1} · ${ph.notes.length ? '' : 'メロディなし · '}${accName(accOf(ph))}</span>`;
     li.querySelector('.del').onclick = () => {
       if (at() < 0) return;
       state.shelf.splice(at(), 1);
@@ -804,7 +827,8 @@ function renderShelf() {
     badge.setAttribute('aria-label', 'このフレーズから進行を変える');
     badge.onclick = () => openSecSheet(ph);
     li.classList.toggle('secstart', !!ph.progChange);
-    badges.append(near, badge);
+    if (ph.notes.length) badges.append(near);
+    badges.append(badge);
     li.append(badges);
     // 小節数が分かるよう、短いフレーズは幅も短く
     const maxBars = Math.max(...state.shelf.map((p) => p.bars));
@@ -825,7 +849,9 @@ function drawShelfRows(playStep = -1) {
       if (r && playStep >= r[0] && playStep < r[1]) step = playStep - r[0];
     }
     rows[i].classList.toggle('playing', step >= 0);
-    if (rows[i]._phrase) drawRoll(rows[i].querySelector('canvas'), [{ phrase: rows[i]._phrase }], { playStep: step });
+    const ph = rows[i]._phrase;
+    // メロディなしの区間は伴奏を描く
+    if (ph) drawRoll(rows[i].querySelector('canvas'), [ph.notes.length ? { phrase: ph } : { phrase: ph, acc: buildSeq([ph], true).acc, accFocus: true }], { playStep: step });
   }
 }
 
@@ -1458,6 +1484,16 @@ function init() {
   $('btnSimilar').onclick = similar;
   $('btnVoice').onclick = voicings;
   $('btnRepeat').onclick = repeatLast;
+  $('btnRest').onclick = () => {
+    const open = $('restOpts').classList.toggle('hidden') === false;
+    $('btnRest').setAttribute('aria-expanded', String(open));
+  };
+  for (const b of $('restOpts').querySelectorAll('button'))
+    b.onclick = () => {
+      addRest(+b.dataset.bars);
+      $('restOpts').classList.add('hidden');
+      $('btnRest').setAttribute('aria-expanded', 'false');
+    };
   $('btnEnding').onclick = endingsOfLast;
   $('btnPlayCard').onclick = togglePlay;
   $('btnAccAll').onclick = () => applyAccToAll();

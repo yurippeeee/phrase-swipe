@@ -333,7 +333,7 @@ function makePhrase(ctx, notes, origin, parentId) {
 // ---------- くり返し ----------
 // 全く同じフレーズをもう一度（コードも同じ）
 export function copyPhrase(ph) {
-  return { ...ph, id: newId(), origin: 'repeat', parentId: ph.id, motif: ph.motif || ph.id, notes: ph.notes.map((n) => ({ ...n })) };
+  return { ...ph, id: newId(), origin: ph.notes.length ? 'repeat' : 'rest', parentId: ph.id, motif: ph.motif || ph.id, notes: ph.notes.map((n) => ({ ...n })) };
 }
 
 // 語尾だけ違うフレーズの候補（3回くり返して4回目で変える、など）
@@ -368,7 +368,7 @@ function regenTail(notes, ctx, len) {
 }
 
 // ---------- 派生（これに近いの） ----------
-const ORIGIN_LABEL = { new: '新規', rhythm: 'リズム違い', pitch: '音程違い', partial: '一部変更', repeat: 'くり返し', ending: '語尾違い', chord: 'コード違い' };
+const ORIGIN_LABEL = { new: '新規', rhythm: 'リズム違い', pitch: '音程違い', partial: '一部変更', repeat: 'くり返し', ending: '語尾違い', chord: 'コード違い', rest: 'メロディなし' };
 export const originLabel = (o) => ORIGIN_LABEL[o] || o;
 
 function ctxOf(phrase) {

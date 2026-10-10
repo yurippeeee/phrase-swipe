@@ -7,8 +7,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Phrase Swipe</title>
-  <meta name="app-version" content="2026101017">
-  <link rel="stylesheet" href="css/style.css?v=2026101017">
+  <meta name="app-version" content="2026101018">
+  <link rel="stylesheet" href="css/style.css?v=2026101018">
 </head>
 <body>
   <div id="app">
@@ -30,6 +30,14 @@
         <div class="lastinfo">直前<b id="lastCount"></b></div>
         <button class="chip" id="btnRepeat">くり返す</button>
         <button class="chip" id="btnEnding">語尾違い</button>
+      </div>
+      <div class="restbar" id="restBar">
+        <button class="chip" id="btnRest" aria-expanded="false">メロディなし区間</button>
+        <span class="restopts hidden" id="restOpts">
+          <button class="chip" data-bars="1">1小節</button>
+          <button class="chip" data-bars="2">2小節</button>
+          <button class="chip" data-bars="4">4小節</button>
+        </span>
       </div>
       <div class="voicebar hidden" id="voiceBar">
         <span>リズムはそのまま</span>
@@ -187,17 +195,17 @@
   <script type="importmap">
   {
     "imports": {
-      "./js/accomp.js": "./js/accomp.js?v=2026101017",
-      "./js/app.js": "./js/app.js?v=2026101017",
-      "./js/audio.js": "./js/audio.js?v=2026101017",
-      "./js/generator.js": "./js/generator.js?v=2026101017",
-      "./js/midi.js": "./js/midi.js?v=2026101017",
-      "./js/progressions.js": "./js/progressions.js?v=2026101017",
-      "./js/roll.js": "./js/roll.js?v=2026101017",
-      "./js/theory.js": "./js/theory.js?v=2026101017"
+      "./js/accomp.js": "./js/accomp.js?v=2026101018",
+      "./js/app.js": "./js/app.js?v=2026101018",
+      "./js/audio.js": "./js/audio.js?v=2026101018",
+      "./js/generator.js": "./js/generator.js?v=2026101018",
+      "./js/midi.js": "./js/midi.js?v=2026101018",
+      "./js/progressions.js": "./js/progressions.js?v=2026101018",
+      "./js/roll.js": "./js/roll.js?v=2026101018",
+      "./js/theory.js": "./js/theory.js?v=2026101018"
     }
   }
   </script>
-  <script type="module" src="js/app.js?v=2026101017"></script>
+  <script type="module" src="js/app.js?v=2026101018"></script>
 </body>
 </html>
