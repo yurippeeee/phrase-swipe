@@ -276,6 +276,18 @@ function buildSeq(phrases, withAcc, accOverride, around = {}) {
     ranges.push([off, off + ph.bars * STEPS_PER_BAR]);
     off += ph.bars * STEPS_PER_BAR;
   });
+  // 食い（前にずらした境目）：先に鳴らした和音・ベースを小節線の先まで伸ばし、次の区間の頭では弾き直さない
+  ranges.forEach(([start], i) => {
+    const sh = shifts[i];
+    if (!(sh < 0) || !i) return;
+    const cut = start + sh;
+    for (const inst of ['keys', 'pad', 'bass']) {
+      const nextHit = acc.filter((a) => a.inst === inst && a.s > start).reduce((m, a) => Math.min(m, a.s), start + 8);
+      const until = Math.min(nextHit, start + 8);
+      for (let k = acc.length - 1; k >= 0; k--) if (acc[k].inst === inst && acc[k].s === start) acc.splice(k, 1);
+      for (const a of acc) if (a.inst === inst && a.s === cut) a.d = Math.max(a.d, until - cut);
+    }
+  });
   return { steps: off, notes, acc: withAcc ? acc : [], allAcc: acc, ranges };
 }
 

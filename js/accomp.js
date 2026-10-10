@@ -435,6 +435,13 @@ export function realizeBar(t, chord, barIndex, melody, guitar = false, scale = n
       // その区間で鳴り始める音と、前の区間から伸びてきた音（区間の頭で鳴らし直す）
       if (s1 > s0 && (e.s >= g.from || s0 === g.from)) part.push({ ...e, s: s0, d: s1 - s0 });
     }
+    if (i > 0) {
+      // 変わり目でははっきり聞こえるように：ベースは新しいコードの根音、和音も必ず鳴らす
+      const len = to - g.from;
+      for (const e of part) if (e.inst === 'bass' && e.s === g.from) e.v = ['R'];
+      if (bar.some((e) => e.inst === 'bass') && !part.some((e) => e.inst === 'bass' && e.s === g.from)) part.push({ s: g.from, d: len, v: ['R'], inst: 'bass' });
+      if (!part.some((e) => e.inst !== 'bass' && e.s === g.from && e.v.includes('C'))) part.push({ s: g.from, d: len, v: ['C'], inst: 'keys', cut: true });
+    }
     out.push(...realizeEvents(t, g.chord, part, guitar, scale));
   });
   return out;
