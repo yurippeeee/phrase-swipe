@@ -927,7 +927,7 @@ function exportForGuitar() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  toast('ギター用に書き出しました（ギターコード サポートでインポート）');
+  toast('書き出しました。ギターコード サポートの「フレーズ→TAB」で読み込めます');
 }
 
 // ---------- 設定 ----------
