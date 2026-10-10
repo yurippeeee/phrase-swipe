@@ -230,6 +230,33 @@ const accSpecific = () => state.shelf.find((p) => p.id === state.accTargetId) ||
 
 const accReplaceOrig = () => (state.accReplace && state.accLib.find((x) => x.id === state.accReplace.id)) || null;
 
+// 伴奏カードで試聴するフレーズ（コードが進むのが分かるよう、最大8小節ぶん並べる）
+function accPreview() {
+  const one = accSpecific();
+  if (one) return [one];
+  const MAX = 8;
+  const take = (list) => {
+    const out = [];
+    let bars = 0;
+    for (const p of list) {
+      if (out.length && bars + p.bars > MAX) break;
+      out.push(p);
+      bars += p.bars;
+    }
+    return out;
+  };
+  if (state.accReplace) {
+    const i = state.shelf.findIndex((p) => accOf(p).id === state.accReplace.id);
+    if (i >= 0) return take(state.shelf.slice(i).filter((p) => accOf(p).id === state.accReplace.id));
+  }
+  if (state.shelf.length) return take([...state.shelf].reverse()).reverse();
+  return [accTarget()];
+}
+
+function accSegs(t) {
+  return accPreview().map((ph) => ({ phrase: ph, acc: buildSeq([ph], true, t).acc, accFocus: true, labels: accLabels(ph, t) }));
+}
+
 function accTarget() {
   const using = state.accReplace && state.shelf.find((p) => accOf(p).id === state.accReplace.id);
   const t = accSpecific() || using || lastKept();
@@ -246,7 +273,18 @@ function fillCur() {
   }
   if (state.near) return;
   const orig = accReplaceOrig();
-  if (state.mode === 'acc' && orig) while (state.accDeck.length < 3) state.accDeck.push(...voiceVariants(orig, 5));
+  if (state.mode === 'acc' && orig) while (state.accDeck.length < 3) {
+    // 一度出した組み合わせは出さない（出し尽くしたら最初から）
+    const shown = (state.accReplace.shown ||= []);
+    let more = voiceVariants(orig, 5, [...state.accDeck, ...shown], voiceCtx());
+    if (!more.length) {
+      shown.length = 0;
+      more = voiceVariants(orig, 5, state.accDeck, voiceCtx());
+    }
+    if (!more.length) break;
+    shown.push(...more);
+    state.accDeck.push(...more);
+  }
   else if (state.mode === 'acc') while (state.accDeck.length < 3) state.accDeck.push(generateAcc(null, state.accFit));
   else fillDeck();
 }
@@ -320,7 +358,7 @@ function accCardEl(t, behind) {
   if (accReplaceOrig()) el.querySelector('.card-foot span:last-child').textContent = '差し替え →';
   el._acc = t;
   el._phrase = target;
-  el._segs = [{ phrase: target, acc: buildSeq([target], true, t).acc, accFocus: true, labels: accLabels(target, t) }];
+  el._segs = accSegs(t);
   return el;
 }
 
@@ -446,7 +484,7 @@ function playCurrent() {
     return;
   }
   const seq =
-    state.mode === 'acc' ? buildSeq([accTarget()], true, item) : buildSeq(cardSegments(item).map((s) => s.phrase), state.padOn);
+    state.mode === 'acc' ? buildSeq(accPreview(), true, item) : buildSeq(cardSegments(item).map((s) => s.phrase), state.padOn);
   audio.play({ ...seq, loop: true }, state.settings.bpm);
 }
 
@@ -630,7 +668,7 @@ function similar() {
 function voicings() {
   const item = curDeck()[0];
   if (!item || deciding || state.mode !== 'acc') return;
-  const vars = voiceVariants(item, 5);
+  const vars = voiceVariants(item, 5, [], voiceCtx());
   curDeck().splice(1, 0, ...vars);
   renderBack();
   toast(state.settings.guitarAcc ? `コードごとに構成音を変えた候補を${vars.length}つ追加（ギター向けの間は押さえ方どおりの音）` : `コードごとに構成音を変えた候補を${vars.length}つ追加`);
@@ -790,11 +828,19 @@ function accPreviewPhrase() {
   return { bars: 2, notes: [], chords: [prog[0], prog[1 % prog.length]] };
 }
 
+// 構成音違いを比べるための、曲で使っているコード（重複なし）
+function voiceCtx() {
+  const seen = new Map();
+  for (const ph of [...state.shelf, ...accPreview()]) for (const c of ph.chords) if (c) seen.set(c.label, c);
+  return { chords: [...seen.values()], scale: keyScalePcs() };
+}
+
 // 伴奏の棚の1つを、リズムはそのままで構成音だけ変えた候補から選び直す
 function startAccReplace(t) {
   state.accReplace = { id: t.id };
   state.accTargetId = null;
-  state.accDeck = voiceVariants(t, 5);
+  state.accDeck = voiceVariants(t, 5, [], voiceCtx());
+  state.accReplace.shown = [...state.accDeck];
   setMode('acc');
   showView('viewSwipe');
 }
@@ -1304,7 +1350,7 @@ function init() {
     if (state.mode !== 'acc' || !t || !top || !top._acc) return;
     t.fit = state.accFit;
     top.querySelector('.tag').textContent = accName(t);
-    top._segs = [{ phrase: top._phrase, acc: buildSeq([top._phrase], true, t).acc, accFocus: true, labels: accLabels(top._phrase, t) }];
+    top._segs = accSegs(t);
   });
   $('fitRange').addEventListener('change', () => {
     save();

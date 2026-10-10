@@ -231,7 +231,7 @@ export function voiceName(t) {
 const MIX_CANDIDATES = {
   dom: ['seventh', 'sus4'],
   maj: ['seventh', 'add9', 'six', 'sus2'],
-  min: ['seventh', 'add9', 'plain'],
+  min: ['seventh', 'add9', 'sus4'],
   other: ['seventh', 'plain'],
 };
 function colorFor(t, chord, scale) {
@@ -269,12 +269,18 @@ export function voicedLabel(t, chord, scale) {
 }
 
 // 構成音違い：リズムはそのまま（合いの手の位置も同じ）で、コードごとに構成音を変えたもの
-export function voiceVariants(t, count = 5) {
-  // 割り当て（種類ごとの開始位置）と広げ方が同じ候補は出さない
-  const sig = (v) => (v.color === 'mix' ? Object.keys(MIX_CANDIDATES).map((k) => Math.floor(hashRand(v.vseed || v.id, 'mix', k) * MIX_CANDIDATES[k].length)).join('') : v.color || 'plain') + (v.spread || 'close');
-  const seen = new Set([sig(t)]);
+// ctx: { chords, scale } 曲で使うコード。あれば実際の響きで同じかどうかを比べる
+export function voiceVariants(t, count = 5, avoid = [], ctx = null) {
+  // 割り当てと広げ方が同じ候補は出さない
+  const sig = (v) =>
+    (ctx && ctx.chords.length
+      ? ctx.chords.map((c) => colorFor(v, c, ctx.scale)).join()
+      : v.color === 'mix'
+        ? Object.keys(MIX_CANDIDATES).map((k) => Math.floor(hashRand(v.vseed || v.id, 'mix', k) * MIX_CANDIDATES[k].length)).join('')
+        : v.color || 'plain') + (v.spread || 'close');
+  const seen = new Set([t, ...avoid].map(sig));
   const out = [];
-  for (let i = 0; out.length < count && i < 200; i++) {
+  for (let i = 0; out.length < count && i < 400; i++) {
     const spread = out.length < 3 ? t.spread || 'close' : pick(['close', 'open']);
     const v = { ...t, id: newId(), seed: t.seed || t.id, color: 'mix', vseed: newId() + i, spread };
     if (seen.has(sig(v))) continue;
@@ -394,9 +400,20 @@ export function realizeBar(t, chord, barIndex, melody, guitar = false, scale = n
   const open = t.spread === 'open';
   const all = [];
   for (let p = t.reg; all.length < (open ? 14 : 7); p++) if (pcs.includes(p % 12)) all.push(p);
-  // 広げると上が高くなりすぎるので、G5 より上は1オクターブ下げる
-  const ladder = open ? all.filter((_, i) => i % 2 === 0).map((p) => { while (p > 79) p -= 12; return p; }) : all;
-  const close = ladder.slice(0, pcs.length);
+  // 広げる：密集配置の2番目・4番目…を1オクターブ上げる（構成音は全部残す）。G5 より上は下げる
+  let ladder = all;
+  let close = all.slice(0, pcs.length);
+  if (open) {
+    const spread = close.map((p, i) => (i % 2 ? p + 12 : p)).map((p) => (p > 79 ? p - 12 : p)).sort((a, b) => a - b);
+    close = spread;
+    const set = new Set();
+    for (let o = 0; o < 3; o++) for (const p of spread) {
+      let q = p + o * 24;
+      while (q > 79) q -= 12;
+      set.add(q);
+    }
+    ladder = [...set].sort((a, b) => a - b);
+  }
   const out = [];
   for (const e of bar) {
     for (const v of e.v) {
